@@ -1,0 +1,51 @@
+modbus_registers:
+  device_id: 0x0001
+  changeable_parameters: 0x0002
+  serial_number: 0x0003
+  state_of_device: 0x0004
+  lock_status: 0x0005
+  frequency: 0x0006
+  duration: 0x0007
+  current: 0x0008
+
+#save/reset not documented in NH8 pdf, only SF8025 pdf
+  save_parameters: 0x0009
+  reset_parameters: 0x000A
+
+  frequency_min: 0x0020
+  frequency_max: 0x0021
+  duration_min: 0x0022
+  duration_max: 0x0023
+  current_min: 0x0024
+  current_max: 0x0025
+  min_ntc_temp: 0x0026
+  max_ntc_temp: 0x0027
+  current_max_limit: 0x0029
+  current_protection_threshold: 0x002A
+
+  current_measured: 0x0040
+  voltage_measured: 0x0041
+  ntc_temperature_measured: 0x0042
+  #undocumented
+  pcb_temperature_measured: 0x0043
+
+  rs_setting: 0x0080
+  current_set_calibration: 0x0088
+  ntc_b25_100_coefficient: 0x008A
+
+  tec_temperature_value: 0x0070
+  tec_temperature_max: 0x0071
+  tec_temperature_min: 0x0072
+  tec_temperature_max_limit: 0x0073
+  tec_temperature_min_limit: 0x0074
+  tec_temperature_measured: 0x0075
+  tec_current_measured: 0x0076
+  tec_current_limit: 0x0077
+  tec_voltage: 0x0078
+  tec_state: 0x007A
+  tec_current_set_calibration: 0x007E
+  internal_ld_ntc_sensor: 0x007F
+
+  p_coefficient: 0x0091
+  i_coefficient: 0x0092
+  d_coefficient: 0x0093

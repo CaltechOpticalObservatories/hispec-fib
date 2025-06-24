@@ -5,40 +5,45 @@ build-backend = "setuptools.build_meta"
 
 [project]
 # Basic information about your project.
-name = "your-package-name" 
+name = "hispecfib"
 version = "0.1.0" 
 dependencies = []
 requires-python = ">=3.7"
 authors = [
-  {name = "Your Name", email = "your.email@example.com"}
+  {name = "Jeb Bailey", email = "jibailey@caltech.edu"}
 ]
 maintainers = [
-  {name = "Your Name", email = "your.email@example.com"}
+  {name = "COO", email = "your.email@example.com"}
 ]
-description = "A brief description of your package"
+description = "The HISPEC Fiber Subsystem python codebase"
 readme = "README.md" 
 license = { text = "MIT" }
-keywords = ["example", "package", "keywords"] 
+keywords = ["astronomy", "controls",]
 classifiers = [
-  "Programming Language :: Python"
+  "Programming Language :: Python",
+  "Programming Language :: C++",
+  "Programming Language :: Rust"
 ]
 
 [project.urls]
 # Various URLs related to your project. These links are displayed on PyPI.
-Homepage = "https://example.com" 
+Homepage = "https://github.com/CaltechOpticalObservatories/hispec-fib"
 Documentation = "https://readthedocs.org"
-Repository = "https://github.com/yourusername/your-repo"
-"Bug Tracker" = "https://github.com/yourusername/your-repo/issues" 
-Changelog = "https://github.com/yourusername/your-repo/blob/master/CHANGELOG.md"
+Repository = "https://github.com/CaltechOpticalObservatories/hispec-fib"
+"Bug Tracker" = "https://github.com/CaltechOpticalObservatories/hispec-fib/issues"
+Changelog = "https://github.com/CaltechOpticalObservatories/hispec-fib/blob/master/CHANGELOG.md"
 
 [project.scripts]
 # Defines command-line scripts for your package. Replace with your script and function.
-your-command = "your_module:your_function"
+#your-command = "your_module:your_function"
 
 [project.optional-dependencies]
 # Optional dependencies that can be installed with extra tags, like "dev".
 dev = [
   "pytest", 
   "black",
-  "flake8"
+  "flake8",
+  "minimalmodbus>=1.0.0",
+  "PyYAML>=6.0.1",
+  "pyserial>=3.5"
 ]
