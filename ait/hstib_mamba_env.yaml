@@ -1,0 +1,22 @@
+name: hstib
+channels:
+  - conda-forge
+dependencies:
+  - astropy
+  - cython
+  - ipython
+  - ipywidgets
+  - jplephem
+  - jupyterlab
+  - matplotlib
+  - minimalmodbus>=2.1.1
+  - mpld3
+  - pip
+  - psutil
+  - pyserial>=3.5
+  - python=3.11
+  - pyzmq
+  - scipy
+  - numpy
+
+prefix: ~/miniforge3/envs/hstib
