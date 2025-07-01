@@ -135,6 +135,18 @@ class Laser:
         drive.set_current_max(self.laser_properties.max_current.to(u.mA).value)
         drive.set_tec_pid(*self.laser_properties.tec_pid)
 
+    def disable_interlock_and_cool(self):
+        self.program_drive_limits()
+        self.device.set_current(0)
+        self.device.disable_interlock()
+        self.device.start_tec()
+        self.device.start_device()
+
+    def shutdown(self):
+        self.device.set_current(0)
+        self.device.stop_device()
+        self.device.stop_tec()
+
     def set_current_as_percent(self, x:float, enforce_limits=True):
         if enforce_limits:
             self.program_drive_limits()
