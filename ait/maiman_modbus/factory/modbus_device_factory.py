@@ -18,8 +18,12 @@ class ModbusDeviceFactory:
     def get_device(port: str = "COM6",
                    slave_address: int = 1,
                    timeout: float = 0.01,
-                   logger: Optional[Logger] = None) -> ModbusDevice:
-        if ModbusDeviceFactory._instance is None:
+                   logger: Optional[Logger] = None,
+                   singleton: bool = False) -> ModbusDevice:
+        if singleton and ModbusDeviceFactory._instance is not None:
+            return  ModbusDeviceFactory._instance
+
+        else:
             comm = ModbusCommunication(port=port, slave_address=slave_address)
             comm.connect()
 
@@ -39,6 +43,7 @@ class ModbusDeviceFactory:
             device.model = model
             device.config = config
 
+        if singleton:
             ModbusDeviceFactory._instance = device
 
-        return ModbusDeviceFactory._instance
+        return device
