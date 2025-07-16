@@ -22,6 +22,11 @@ class LaserProperties:
     test_monitor_current: float = None
     ntc_t_coefficient: float = None
 
+#NB the pot that sets the OCP on the Maiman driver is https://www.digikey.com/en/products/detail/bourns-inc/3224W-1-203E/225661
+#with a 100ppm/degC coeff. the driver is 0-250 mA over the range of the pot.
+# thermal envelope has domain of -15 to 30 C or so. At pot extrema it sets the Maiman to 0 and 331mA.
+# So 45*100e-6*331 is max OCP drift or 1.48 mA so set pot 1.5mA below allowable diode max.
+OC_POT_TEMP_DRIFT_MARGIN_MA = 5
 
 TEC_PID_DEFAULT = (100, 1000, 0)
 TEC_PID_DFB = (20, 1000, 1000)
@@ -130,9 +135,9 @@ class Laser:
     def program_drive_limits(self):
         drive = self.device
         drive.comm.connect()
-        print(f"Programming Limits for Maiman (S/N: {drive.get_serial_number()})...")
+        print(f"Programming limits for {self.name}, Maiman driver: S/N {drive.get_serial_number()}...")
         drive.set_tec_current_limit(self.laser_properties.tec_max_current.to(u.A).value)
-        drive.set_current_max(self.laser_properties.max_current.to(u.mA).value)
+        drive.set_current_max(self.laser_properties.max_current.to(u.mA).value-OC_POT_TEMP_DRIFT_MARGIN_MA)
         drive.set_tec_pid(*self.laser_properties.tec_pid)
 
     def disable_interlock_and_cool(self):
@@ -146,6 +151,7 @@ class Laser:
         self.device.set_current(0)
         self.device.stop_device()
         self.device.stop_tec()
+        self.device.enable_interlock()
 
     def set_current_as_percent(self, x:float, enforce_limits=True):
         if enforce_limits:
@@ -153,7 +159,7 @@ class Laser:
         device = self.device
         x = max(min(x,1), 0)
         device.comm.connect()
-        range = self.laser_properties.max_current - self.laser_properties.threshold_current
+        range = self.laser_properties.max_current - self.laser_properties.threshold_current - OC_POT_TEMP_DRIFT_MARGIN_MA*u.mA
         current = (range*x + self.laser_properties.threshold_current)
         print(f"Setting current to {x if x==0 else current} ")
         device.set_current(x if x==0 else current.to('mA').value)
@@ -175,8 +181,8 @@ class Laser:
         print("Current:", device.get_current())
         print("Current Min:", device.get_current_min())
         print("Current Max:", device.get_current_max())
-        print("Max Current Limit:", device.get_current_max_limit())
         print("Protection Threshold:", device.get_current_protection_threshold())
+        print("Driver Max Current:", device.get_current_max_limit())
         print("Voltage:", device.get_voltage_measured())
 
         print("Frequency:", device.get_frequency())
