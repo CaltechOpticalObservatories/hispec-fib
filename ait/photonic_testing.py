@@ -10,6 +10,7 @@ class LaserProperties:
     name: str
     model_number: str
     max_current: float
+    dne_current: float
     threshold_current: float
     efficiency: float
     wavelength: float
@@ -25,8 +26,7 @@ class LaserProperties:
 #NB the pot that sets the OCP on the Maiman driver is https://www.digikey.com/en/products/detail/bourns-inc/3224W-1-203E/225661
 #with a 100ppm/degC coeff. the driver is 0-250 mA over the range of the pot.
 # thermal envelope has domain of -15 to 30 C or so. At pot extrema it sets the Maiman to 0 and 331mA.
-# So 45*100e-6*331 is max OCP drift or 1.48 mA so set pot 1.5mA below allowable diode max.
-OC_POT_TEMP_DRIFT_MARGIN_MA = 5
+# So 45*100e-6*331 is max OCP drift or 1.48 mA so set pot 1.5mA below allowable diode DNE current.
 
 TEC_PID_DEFAULT = (100, 1000, 0)
 TEC_PID_DFB = (20, 1000, 1000)
@@ -34,7 +34,8 @@ TEC_PID_DFB = (20, 1000, 1000)
 
 LASER_1028 = LaserProperties(name="1028", model_number="FLPD-1028-50-DFB-BTF",
                              threshold_current=14.5 * u.mA,
-                             max_current=250 * u.mA,
+                             max_current=225 * u.mA,
+                             dne_current=250 * u.mA,
                              tec_max_current=1.2 * u.A,
                              tec_pid=TEC_PID_DFB,
 
@@ -51,7 +52,8 @@ LASER_1028 = LaserProperties(name="1028", model_number="FLPD-1028-50-DFB-BTF",
 
 LASER_2330 = LaserProperties(name="2330", model_number="FLPD-2330-03-DFB-BTF",
                              threshold_current=24.9 * u.mA,
-                             max_current=120 * u.mA,
+                             max_current=110 * u.mA,
+                             dne_current=120 * u.mA,
                              tec_max_current=1.2 * u.A,
                              tec_pid=TEC_PID_DFB,
 
@@ -68,7 +70,8 @@ LASER_2330 = LaserProperties(name="2330", model_number="FLPD-2330-03-DFB-BTF",
 
 LASER_1270 = LaserProperties(name="1270", model_number="1270LD-1-0-0",
                              threshold_current=8 * u.mA,
-                             max_current=70 * u.mA,
+                             max_current=60 * u.mA,
+                             dne_current=70 * u.mA,
                              tec_max_current=1 * u.A,
                              tec_pid=TEC_PID_DEFAULT,
 
@@ -85,7 +88,8 @@ LASER_1270 = LaserProperties(name="1270", model_number="1270LD-1-0-0",
 
 LASER_1430 = LaserProperties(name="1430", model_number="1430LD-1-0-0",
                              threshold_current=8 * u.mA,
-                             max_current=70 * u.mA,
+                             max_current=60 * u.mA,
+                             dne_current=70 * u.mA,
                              tec_max_current=1 * u.A,
                              tec_pid=TEC_PID_DEFAULT,
 
@@ -102,7 +106,8 @@ LASER_1430 = LaserProperties(name="1430", model_number="1430LD-1-0-0",
 
 LASER_1510 = LaserProperties(name="1510", model_number="15100LD-1-0-0",
                              threshold_current=8 * u.mA,
-                             max_current=70 * u.mA,
+                             max_current=60 * u.mA,
+                             dne_current=70 * u.mA,
                              tec_max_current=1 * u.A,
                              tec_pid=TEC_PID_DEFAULT,
 
@@ -130,15 +135,19 @@ class Laser:
         self.name = name
         self.laser_properties = LASER_PROPERTIES[name]
         self.device = ModbusDeviceFactory.get_device(MODBUS_PORT, slave_address=address)
-        atexit.register(self.device.stop_device)
+        atexit.register(self.shutdown)
 
     def program_drive_limits(self):
-        drive = self.device
-        drive.comm.connect()
-        print(f"Programming limits for {self.name}, Maiman driver: S/N {drive.get_serial_number()}...")
-        drive.set_tec_current_limit(self.laser_properties.tec_max_current.to(u.A).value)
-        drive.set_current_max(self.laser_properties.max_current.to(u.mA).value-OC_POT_TEMP_DRIFT_MARGIN_MA)
-        drive.set_tec_pid(*self.laser_properties.tec_pid)
+        self.device.comm.connect()
+        print(f"Programming limits for {self.name}, Maiman driver: S/N {self.device.get_serial_number()}...")
+        ocp_ma = self.device.get_current_protection_threshold()
+        dne_ma = self.laser_properties.dne_current.value
+        if ocp_ma > dne_ma:
+            raise RuntimeError(f"Current DRV OCP ({ocp_ma} mA) potentiometer is too "
+                               f"high for laser {self.name} (DNE {dne_ma} mA)")
+        self.device.set_tec_current_limit(self.laser_properties.tec_max_current.to(u.A).value)
+        self.device.set_current_max(self.laser_properties.max_current.to(u.mA).value)
+        self.device.set_tec_pid(*self.laser_properties.tec_pid)
 
     def disable_interlock_and_cool(self):
         self.program_drive_limits()
@@ -148,6 +157,7 @@ class Laser:
         self.device.start_device()
 
     def shutdown(self):
+        self.device.comm.connect()
         self.device.set_current(0)
         self.device.stop_device()
         self.device.stop_tec()
@@ -159,10 +169,12 @@ class Laser:
         device = self.device
         x = max(min(x,1), 0)
         device.comm.connect()
-        range = self.laser_properties.max_current - self.laser_properties.threshold_current - OC_POT_TEMP_DRIFT_MARGIN_MA*u.mA
+        range = self.laser_properties.max_current - self.laser_properties.threshold_current
         current = (range*x + self.laser_properties.threshold_current)
         print(f"Setting current to {x if x==0 else current} ")
         device.set_current(x if x==0 else current.to('mA').value)
+        set_current = device.get_current()
+        print(f"...current: {set_current} mA")
 
     def status(self):
         device = self.device
