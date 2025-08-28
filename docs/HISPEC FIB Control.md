@@ -144,6 +144,102 @@ SCI_FOC_R --> MSR --> |3| SLIT_R1((Slit_R1))
 ### Embedded Controllers
 Each of the embedded controllers exposes a common MQTT interface with endpoints following the Amazon IoT developer guidelines modified for clearer integration with ongoing development wort on the mKTL communication protocol and library (c.f. K. Lanclos, P. Gupta, J. Bailey, others). The embedded codebase is in C and developed within the Zephyr development ecosystem. Code for the boards heavily shared across all four boards and is identical between the two CAL fiber switches. It is intended that the controllers are receiving NTP and thus able to be interacted with in a reasonably time-synchronized manner. 
 Planned control endpoints are as below, MQTT paths will be added as decisions are made:
+
+#### MQTT Endpoints
+    { "memsroute",  memsroute_get,    memsroute_set    },
+    { "mems",       mems_get,    mems_set    },
+    { "laser",      laser_setting_get,laser_setting_set},
+    { "power",      power_get,        power_set        },
+    { "atten",      atten_setting_get,  atten_setting_set  },
+    { "status",     status_get,       NULL  },
+    { "sleep",      NULL,  sleep_set  }, // GET only
+
+##### JSON definition
+    msg_type: get|set
+    key:
+
+
+- cmd/hsfib-tib/mems/<switch_name> (get/set))
+  - get/set: {"value": "A"|"B"}
+  - switch names:
+    - [yj|hk]_cal_laser
+    - [yj|hk]_ao_fei
+    - [yj|hk]_forward_retro
+    - [yj|hk]_mm_sm
+- cmd/hsfib-tib/memsroute (get/set)
+  - set:
+    - {"value": [in, out]}
+      - in:
+        - [yj|hk]_1430
+        - [yj|hk]_cal
+        - [yj|hk]_laser
+        - [yj|hk]_mm
+        - [yj|hk]_sm
+      - out:
+        - [yj|hk]_ao
+        - [yj|hk]_fei
+        - [yj|hk]_pd
+  - get: {\"active_routes\":{in:out, ....}} | or error
+- cmd/hsfib-tib/<laser_name>/<setting_name> (get/set)
+  - get: {<setting_name>:<value>}
+  - set: {"value": "uint16"}
+  - laser names:
+    - laser1028y
+    - laser1270j
+    - laser1430yj
+    - laser1430yj
+    - laser1510h
+    - laser2330k
+  - laser settings:
+    - TEC_TEMPERATURE_MEASURED
+    - PCB_TEMPERATURE_MEASURED
+    - TEC_TEMPERATURE_VALUE
+    - CURRENT_MEASURED
+    - CURRENT
+    - VOLTAGE_MEASURED
+    - CURRENT_MAX_LIMIT
+    - CURRENT_PROTECTION_THRESHOLD
+    - CURRENT_SET_CALIBRATION
+    - NTC_COEFFICIENT
+    - TEC_CURRENT_MEASURED
+    - TEC_VOLTAGE
+    - SERIAL_NUMBER
+    - FREQUENCY
+    - DURATION
+    - STATE_OF_DEVICE_COMMAND
+- cmd/hsfib-tib/<attenuator_name>/<setting> (get/set)
+  - setting names:
+    - coeff
+      - get/set: {"db2volt":[%.4f,%.4f,%.4f],"volt2db":[%.4f,%.4f,%.4f]}
+    - value, valuedb
+      - get: {"voltage":<value>, "db": <value>}
+      - set: {"value": "uint16"}
+  - attenuator names:
+    - atten1028y
+    - atten1270j
+    - atten1430yj
+    - atten1430yj
+    - atten1510h
+    - atten2330k
+- cmd/hsfib-tib/status (get)
+  - {"power": "true"|"false", ..other stuff..}
+- cmd/hsfib-tib/power (get/set)
+  - get: {"power": "true"|"false"}
+  - set: {"value": "true"|"false"}
+- cmd/hsfib-tib/sleep (get/set)
+  - get: {"power": "true"|"false"}
+  - set: {"value": "true"|"false"}
+- responses fall back to if messages to not specify a response_topic (which they should): cmd/hsfib-tib/resp 
+
+- generic error responses:
+  - "{\"error\":\"Invalid or unrecognized command\"}"
+  - "{\"error\":\"Unknown request\"}"
+  - "{\"error\":\"Unsupported operation\"}"
+  - "{\"error\":\"busy\"}"
+
+- dt/hsfib-tib/photodiode
+  - payload: "{\"yj\":%hd, \"hk\":%hd, \"time\":%lld}"
+
 #### CAL Fiberswitch, AS, and TIB
 - get/set light route - Configure a path for light through the switch assembly. This will fail if the path is not physically attainable (i.e. there is no path from X to Y). It may invalidate a previous activated path as not all paths can co-exist. 
 - get/set switch - Configure the state of a switch (i.e. in/output of switch X to position A/B)
