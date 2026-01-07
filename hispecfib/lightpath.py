@@ -362,7 +362,8 @@ class Switch(Component, BiPortMixin):
         return cls(name, labels=[common] + choices, allowed_edges=allowed, default=(default_choice, common),
                    transmission=transmission)
 
-    def set_state(self, src_label: str, dst_label: str) -> None:
+    def set_state(self, state: str) -> None:
+        src_label, dst_label = state
         if (src_label, dst_label) not in self.allowed:
             raise ValueError(f"Illegal switch state {(src_label, dst_label)}")
         self.state = (src_label, dst_label)
@@ -554,7 +555,7 @@ class FocusSelector(Component, BiPortMixin):
         self.state = state
 
     def _retro_enabled(self) -> bool:
-        return self.state in ("SMF", "SCI")
+        return self.state in ("SCI", )
 
     def internal_edges(self) -> Iterable[Edge]:
         # Forward IN → selected focus output
@@ -643,29 +644,37 @@ class LaserDiode(Source):
             N_ph_s = (P * lam.to(u.m) / (const.h*const.c)).to(1/u.s).value
             sigma_nm = max(lam_nm/limit_R, self._fwhm.to_value(u.nm) / (2.0*np.sqrt(2.0*np.log(2.0))))
             amp = float(N_ph_s) / (sigma_nm * np.sqrt(2.0*np.pi))
-            print(P.to('mW'), N_ph_s, amp, lam_nm, sigma_nm)
+            # print(P.to('mW'), N_ph_s, amp, lam_nm, sigma_nm)
         return Spectrum(SourceSpectrum(synmodels.Gaussian1D, amplitude=amp, mean=lam_nm*u.nm, stddev=sigma_nm*u.nm),
                         width_hint_nm=sigma_nm*u.nm)
 
 
 class Detection:
-    def __init__(self, levels, signal, noise, saturation, snr:Any=None):
+    def __init__(self, levels, signal, noise, saturation, total_noise=False):
         self.levels = levels
         self.signal = signal
         self.noise = noise
         self.saturation = saturation
-        self.snr = snr if snr is not None else self.signal/np.sqrt(self.signal+self.noise**2)
+        self.snr = self.signal/(self.noise if total_noise else np.sqrt(self.signal+self.noise**2))
         self.saturation_mask = self.signal >= self.saturation
 
-    def sn(self, saturated=np.nan, collapse=np.max):
+    def sn(self, saturated=np.nan, collapse=np.max, axis=0):
+        if isinstance(self.snr, float):
+            return self.snr if self.signal < self.saturation else np.nan
+
         snr = self.snr.copy()
         snr[self.saturation_mask] = saturated
         if snr.ndim ==1:
             return snr
         if collapse ==np.sum:
-            return np.sqrt(collapse(snr**2, axis=0))
+            return np.sqrt(collapse(snr**2, axis=axis))
         else:
-            return collapse(snr, axis=0)
+            return collapse(snr, axis=axis)
+
+    @property
+    def has_saturation(self):
+        return self.saturation_mask if isinstance(self.saturation_mask, bool) else self.saturation_mask.any()
+
 
 class Detector(Component):
     pass
@@ -679,9 +688,12 @@ class Photodiode(Detector):
                  noise = 7.5 * u.femtowatt / u.Hz ** 0.5,
                  gain = 1e11 * u.V/u.A,
                  saturation = 110 * u.picowatt,
-                 adc_noise=0.6 * u.mV / (10 * u.V),
+                 adc_noise=0.187 * u.uV,
                  saturation_wavelength = 1550 * u.nm,
                  resp_wavelength_nm: "np.ndarray | None" = None,
+                 noise_bandwidth:float=20*u.Hz,
+                 sample_rate:float = 50 * u.Hz,
+                 adc_gain:float = (2**16-1)/(2*6.144)/u.V,
                  resp_values: "np.ndarray | None" = None) -> None:
         super().__init__(name)
         self.in_p = self.add_port("in", PortDirection.IN)
@@ -694,9 +706,12 @@ class Photodiode(Detector):
         self.resp_wavelength_nm = resp_wavelength_nm
         self.resp_values = resp_values.to(u.A/u.W) if resp_values is not None else None
         self.saturation_wavelength = saturation_wavelength.value
+        self.noise_bandwidth = noise_bandwidth
+        self.sample_rate = sample_rate
+        self.adc_gain = adc_gain
 
         # responsivity in A/W
-        self._resp_a_per_w = lambda grid_nm : np.interp(grid_nm, resp_wavelength_nm, self.resp_values.value).clip(0, np.inf)
+        self._resp_a_per_w = lambda grid_nm : np.interp(grid_nm, resp_wavelength_nm, self.resp_values.value).clip(0, np.inf)*u.A/u.W
 
     def observe(self, fluence: Spectrum, *, grid_nm: np.ndarray, texp_s: float = 1.0) -> "Detection":
         """
@@ -717,13 +732,28 @@ class Photodiode(Detector):
             (levels, photons, noise, saturation_mask) — same structure you use today.
         """
         grid_nm = np.asarray(grid_nm, dtype=float)
-        S = fluence(grid_nm, photons=True) * (const.h * const.c / (grid_nm*u.nm).to(u.m))/u.s # watts
-        volts = ((S * self._resp_a_per_w(grid_nm)*u.A/u.W).sum() * self.gain).to('V')
-        noise = (self.noise * (1 / 2/ (texp_s*u.s)) ** 0.5 * self._resp_a_per_w(self.saturation_wavelength) *u.A/u.W * self.gain).to('V')
-        total_noise = np.hypot(noise, self.adc_noise*volts)
-        saturation_v = (self.saturation*self.gain*self._resp_a_per_w(self.saturation_wavelength) *u.A/u.W).to('V')
+        photons = fluence(grid_nm, photons=True)
+        photon_energy = photons * (const.h * const.c / (grid_nm*u.nm).to(u.m))/u.s  # watts
+        photon_noise_energy = np.sqrt(photons) * (const.h * const.c / (grid_nm * u.nm).to(u.m)) / u.s
 
-        return Detection(levels=fluence, signal=volts, noise=total_noise, saturation=saturation_v, snr=volts/total_noise)
+        volts = ((photon_energy * self._resp_a_per_w(grid_nm)).sum() * self.gain).to('V')
+        shot_noise_volts = ((photon_noise_energy * self._resp_a_per_w(grid_nm)).sum() * self.gain).to('V')
+
+        device_noise_volts = self.noise*np.sqrt(self.noise_bandwidth) * self._resp_a_per_w(self.saturation_wavelength)  * self.gain
+
+        # ((7.5e-15 * np.sqrt(20) * .95e11 * 1e3 / 2))
+        # (2 * 6.144 / (2 ** 16 - 1) * 1e3)
+        # adc_noise = ((7.5e-15*sqrt(20)*.95e11*1e3/2))/(2*6.144/(2**16-1)*1e3)
+
+        total_noise = np.sqrt(device_noise_volts**2 + shot_noise_volts**2 + self.adc_noise**2).to(u.V)
+
+        signal = self.adc_gain*volts.to(u.V)
+        noise = self.adc_gain*total_noise.to(u.V)
+
+        saturation_v = (self.saturation*self.gain*self._resp_a_per_w(self.saturation_wavelength)).to('V')
+        saturation = np.floor(self.adc_gain*saturation_v)
+
+        return Detection(levels=fluence, signal=signal.value, noise=noise.value, saturation=saturation.value, total_noise=True)
 
 
 class Spectrograph(Detector):
@@ -769,7 +799,7 @@ class Spectrograph(Detector):
 
         found_in_order = self._in_order(mean_wave.value)
         if not found_in_order.any():
-            print(f'{fluence} with mean wavelength of {mean_wave:1f} not found in any order in {self}')
+            # print(f'{fluence} with mean wavelength of {mean_wave:1f} not found in any order in {self}')
             return None
             # zeros = u.Quantity(np.zeros_like(fluence))
             # return Detection(fluence, zeros, self.noise, self.saturation)
@@ -852,6 +882,27 @@ class LightpathManager:
     def __init__(self) -> None:
         self.components: Dict[str, Component] = {}
         self._links: List[Edge] = []
+        self.meta_lightpaths = {}
+
+    def set_state(self, name, state):
+        if isinstance(state, dict):
+            for k, v in state.items():
+                self.set_state(k, v)
+            return
+
+        if name in self.components:
+            self.get(name).set_state(state)
+            return
+
+        if name == "lightpath":
+            try:
+                for component_name, component_state  in self.meta_lightpaths[state].items():
+                    self.get(component_name).set_state(component_state)
+            except KeyError:
+                raise ValueError(f"Unknown lightpath: '{state}'")
+            return
+
+        raise KeyError("Component not found")
 
     # -- Component management --
     def add(self, comp: Component) -> Component:
@@ -899,7 +950,11 @@ class LightpathManager:
         results: List[List[Edge]] = []
 
         def dfs(node: Port, target: Port, visited: Set[Port], path: List[Edge]) -> None:
-            if len(results) >= max_paths or len(path) >= max_hops:
+            if len(results) >= max_paths:
+                print(f"Too many paths: {len(results)}. Increase max paths {max_paths}")
+                return
+            if len(path) >= max_hops:
+                print(f"Path too long: {len(path)}. Increase max hops {max_hops}")
                 return
             if node == target:
                 results.append(list(path))
@@ -976,6 +1031,10 @@ def build_hispec_partial() -> LightpathManager:
     RSPEC_QE = 0.98
     BSPEC_QE = 0.92
 
+    VORTEX_PEAK = 0.35
+    VORTEX_NULL = 1.0e-4
+    VORTEX_CLEAR = 1.0
+
     # Photodiode responsivity tables (A/W). We'll smooth with PCHIP to continuous curves.
     FEMTO_QE_TC = {900.: 0.2*u.A/u.W, 1000.: 0.6*u.A/u.W, 1040.: 0.68*u.A/u.W, 1200.: 0.8*u.A/u.W,
                    1270.: 0.85*u.A/u.W, 1430.: 0.93*u.A/u.W, 1500.: 0.95*u.A/u.W, 1600.: 0.93*u.A/u.W,
@@ -1030,15 +1089,6 @@ def build_hispec_partial() -> LightpathManager:
         ("C", "A"): TransmissionCurve.unity(),
     }
 
-    PIAA_TC_BIDIR = {("A", "B"): TransmissionCurve.constant(.9),
-                     ("B", "A"): TransmissionCurve.constant(.9)}
-    VORTEX_TC_BIDIR = {("A", "B"): TransmissionCurve.constant(.3),
-                       ("B", "A"): TransmissionCurve.constant(.3)}
-    VORTEX_DARK_TC_BIDIR = {("A", "B"): TransmissionCurve.constant(3.2e-4),
-                            ("B", "A"): TransmissionCurve.constant(3.2e-4)}
-    NORMAL_FREESPACE_TC_BIDIR = {("A", "B"): TransmissionCurve.constant(.75),
-                                 ("B", "A"): TransmissionCurve.constant(.75)}
-
     ECHELLE_ORDERS_FILE = {
         'yj': '/Users/jibailey/src/coo_playground/data/hispec_orders/orders_20220608C_HISPEC_SPECTRO_YJ_pyechelle.csv',
         'hk': '/Users/jibailey/src/coo_playground/data/hispec_orders/orders_20220608C_HISPEC_SPECTRO_HK_pyechelle.csv'}
@@ -1049,6 +1099,24 @@ def build_hispec_partial() -> LightpathManager:
     }
 
     lp = LightpathManager()
+
+    lp.meta_lightpaths = {
+        'mmf_pd': {'selector_yj_focus': 'MMF',
+                   'selector_hk_focus': 'MMF',
+                   'sw27_yj_pd': 'BC',
+                   'sw28_hk_pd': 'BC'},
+        'smf_pd': {'selector_yj_focus': 'SMF',
+                   'selector_hk_focus': 'SMF',
+                   'sw27_yj_pd': 'AC',
+                   'sw28_hk_pd': 'AC'},
+        'spec': {'selector_yj_focus': 'SCI',
+                 'selector_hk_focus': 'SCI',
+                 },
+        'retro': {'selector_yj_focus': 'SCI',
+                  'selector_hk_focus': 'SCI',
+                  'sw21_yj_retro': 'CB',
+                  'sw22_hk_retro': 'CB'},
+    }
 
     # Sources
     s_1028 = lp.add(LaserDiode("LD1028", 1028 * u.nm, width=2*u.MHz, threshold_current=47*u.mA, max_current=250*u.mA,
@@ -1074,14 +1142,17 @@ def build_hispec_partial() -> LightpathManager:
     # Detectors
     atc_imager = lp.add(Imager("ATC", qe=TransmissionCurve.constant(ATC_QE)))
     pd_yj = lp.add(Photodiode("pd_yj", resp_wavelength_nm=FEMTO_QE_TC[0], resp_values=FEMTO_QE_TC[1],
-                              noise=7.5 * u.femtowatt / u.Hz ** 0.5,
-                              gain= 1e11 * u.V/u.A/2,
+                              noise=7.5 * u.femtowatt / u.Hz ** 0.5,  # high-impedance termination
+                              gain= 1e11 * u.V/u.A/2, #/2 because 50ohm termination
+                              noise_bandwidth=20 * u.Hz,
                               saturation=110 * u.picowatt
                               ))
     pd_hk = lp.add(Photodiode("pd_hk", resp_wavelength_nm=THOR_QE_TC[0], resp_values=THOR_QE_TC[1],
-                              noise=2.11 * u.picowatt / u.Hz ** 0.5,
-                              gain=4750*u.kV/u.A/2,
-                              saturation=1.706 * u.microwatt, saturation_wavelength=2330 * u.nm
+                              noise=2.11 * u.picowatt / u.Hz ** 0.5 *3.5,  # 50ohm termination,  3.5 is fudge based on plot
+                              gain=4750*u.kV/u.A/2,  #/2 because 50ohm termination
+                              saturation=1.706 * u.microwatt,
+                              noise_bandwidth=500*u.Hz,
+                              saturation_wavelength=2330 * u.nm
                               # technically saturation will happen about 20 mV sooner because of the bias offset
                               ))
 
@@ -1104,6 +1175,14 @@ def build_hispec_partial() -> LightpathManager:
     beam_fei_in = lp.add(OpticalBeam("beam_fei_in", n_inputs=3))
     fei_pre_losses = lp.add(Filter("fei_pre_losses"))
 
+    # Vortex selector (SelectableFilter) with modes: peak/null/clear (unity placeholders)
+    vortex_selector = lp.add(SelectableFilter("vortex_selector", default="clear",
+                                              models={
+                                                  "peak": {("A", "B"): TransmissionCurve.constant(VORTEX_PEAK)},
+                                                  "null": {("A", "B"): TransmissionCurve.constant(VORTEX_NULL)},
+                                                  "clear": {("A", "B"): TransmissionCurve.constant(VORTEX_CLEAR)},
+                                              }))
+
     # ATC selector (J/H/JH/JHgap) as SelectableDichroic with modeled bandpasses
     atc_selector = lp.add(SelectableDichroic("atc_dichroic_selector", models=ATC_DICHROIC_MODELS, default="J"))
 
@@ -1116,7 +1195,8 @@ def build_hispec_partial() -> LightpathManager:
     lp.link(beam_ao.out, ao_losses.A_in)
     lp.link(ao_losses.B_out, beam_fei_in.inputs[0])
     lp.link(beam_fei_in.out, fei_pre_losses.A_in)
-    lp.link(fei_pre_losses.B_out, atc_selector.A_in)
+    lp.link(fei_pre_losses.B_out, vortex_selector.A_in)
+    lp.link(vortex_selector.B_out, atc_selector.A_in)
 
     # ATC selector → ATC imager (B_out) and → CSD (C_out)
     lp.link(atc_selector.B_out, atc_imager.in_p)
@@ -1158,13 +1238,11 @@ def build_hispec_partial() -> LightpathManager:
     fib_yj_smf_pd = lp.add(Fiber("fib_yj_smf_pd"))
 
     # PIAA selector (SelectableFilter) with modes: high/low/vortex/clear (unity placeholders)
-    piaa_sel_yj = lp.add(SelectableFilter("selector_yj_piaa", default="clear", models={
-        "piaa": PIAA_TC_BIDIR,
-        "vortex": VORTEX_TC_BIDIR,
-
-        "vortex_dark": VORTEX_DARK_TC_BIDIR,
-        "clear": NORMAL_FREESPACE_TC_BIDIR,
-    }))
+    piaa_sel_yj = lp.add(SelectableFilter("selector_yj_piaa", default="clear",
+                                          models={
+                                              "piaa": {("A", "B"): TransmissionCurve.constant(1.0)},
+                                              "clear": {("A", "B"): TransmissionCurve.constant(1.0)},
+                                          }))
 
     # Focus selector (generic) with internal retro gating
     focus_sel_yj = lp.add(FocusSelector("selector_yj_focus", default="SMF"))
@@ -1255,12 +1333,11 @@ def build_hispec_partial() -> LightpathManager:
     f_hk_smf_pd = lp.add(Fiber("fib_hk_smf_pd"))
 
     # PIAA selector (SelectableFilter) with modes: high/low/vortex/clear
-    piaa_sel_hk = lp.add(SelectableFilter("selector_hk_piaa", default="clear", models={
-        "piaa": PIAA_TC_BIDIR,
-        "vortex": VORTEX_TC_BIDIR,
-        "vortex_dark": VORTEX_DARK_TC_BIDIR,
-        "clear": NORMAL_FREESPACE_TC_BIDIR,
-    }))
+    piaa_sel_hk = lp.add(SelectableFilter("selector_hk_piaa", default="clear",
+                                          models={
+                                              "piaa": {("A", "B"): TransmissionCurve.constant(1.0)},
+                                              "clear": {("A", "B"): TransmissionCurve.constant(1.0)},
+                                          }))
 
     # HK Focus selector (generic) with internal retro gating
     focus_sel_hk = lp.add(FocusSelector("selector_hk_focus", default="SMF"))
@@ -1317,12 +1394,12 @@ def build_hispec_partial() -> LightpathManager:
     lp.link(f_hk_science.out_p, rspec.in_p)
 
     # Defaults
-    sw_retro_yj.set_state("C", "A")  # feed WDM by default
-    sw_fei_yj.set_state("C", "A")  # toward AO path by default
-    sw_pd_yj.set_state("A", "C")  # YJ PD reads SMF by default
-    sw_retro_hk.set_state("C", "A")  # feed WDM by default
-    sw_fei_hk.set_state("C", "A")  # toward AO path by default
-    sw_pd_hk.set_state("A", "C")  # HK PD reads SMF by default
+    sw_retro_yj.set_state("CA")  # feed WDM by default
+    sw_fei_yj.set_state("CA")  # toward AO path by default
+    sw_pd_yj.set_state("AC")  # YJ PD reads SMF by default
+    sw_retro_hk.set_state("CA")  # feed WDM by default
+    sw_fei_hk.set_state("CA")  # toward AO path by default
+    sw_pd_hk.set_state("AC")  # HK PD reads SMF by default
     focus_sel_yj.set_state("SMF")  # allow retro by default (YJ)
     focus_sel_hk.set_state("SMF")  # allow retro by default (HK)
     return lp

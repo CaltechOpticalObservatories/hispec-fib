@@ -18,5 +18,6 @@ dependencies:
   - pyzmq
   - scipy
   - numpy
+  - error_propagation
 
 prefix: ~/miniforge3/envs/hstib

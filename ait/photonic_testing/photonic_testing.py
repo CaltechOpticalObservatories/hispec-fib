@@ -52,8 +52,8 @@ LASER_1028 = LaserProperties(name="1028", model_number="FLPD-1028-50-DFB-BTF",
 
 LASER_2330 = LaserProperties(name="2330", model_number="FLPD-2330-03-DFB-BTF",
                              threshold_current=24.9 * u.mA,
-                             max_current=110 * u.mA,
-                             dne_current=120 * u.mA,
+                             max_current=119 * u.mA,
+                             dne_current=135 * u.mA,
                              tec_max_current=1.2 * u.A,
                              tec_pid=TEC_PID_DFB,
 
@@ -175,6 +175,7 @@ class Laser:
         device.set_current(x if x==0 else current.to('mA').value)
         set_current = device.get_current()
         print(f"...current: {set_current} mA")
+        return set_current
 
     def status(self):
         device = self.device

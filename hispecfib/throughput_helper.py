@@ -36,7 +36,7 @@ Curve file formats supported (autodetected):
 All wavelengths are returned exactly as present in the source curves (no unit changes).
 Interpolation is linear; out-of-range fill is 1.0 (neutral element for multiplication).
 
-Author: generated for HISPEC project (Python 3.12 compatible).
+Author: generated for HISPEC project (Python 3.12 compatible) using GPT5 by jib
 """
 
 from __future__ import annotations
