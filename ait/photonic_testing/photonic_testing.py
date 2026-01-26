@@ -1,9 +1,10 @@
 import atexit
 from dataclasses import dataclass
 import astropy.units as u
+from threading import Timer
 
-from maiman_modbus.factory import ModbusDeviceFactory
-
+from .maiman_modbus.factory import ModbusDeviceFactory
+from .maiman_modbus.utils import utils as mainman_const
 
 @dataclass
 class LaserProperties:
@@ -130,12 +131,24 @@ LASER_PROPERTIES = {"1028": LASER_1028,
                     "1510": LASER_1510,
                     "2330": LASER_2330}
 
+LASER_DRIVER_SERIALS = {"1028": 8229,
+                   "1270": 8228,
+                   "yj1430": 8222,
+                   "hk1430": 8227,
+                   "1510": 8225,
+                   "2330": 8226}
+
 class Laser:
     def __init__(self, name: str, address: int = 1, MODBUS_PORT: str = "COM6"):
         self.name = name
-        self.laser_properties = LASER_PROPERTIES[name]
+        try:
+            self.laser_properties = LASER_PROPERTIES[name]
+        except KeyError:
+            raise ValueError(f"Unknown laser {name}")
         self.device = ModbusDeviceFactory.get_device(MODBUS_PORT, slave_address=address)
+        assert self.device.get_serial_number() == LASER_DRIVER_SERIALS[name], 'BAD BUS CONFIG, do not continue'
         atexit.register(self.shutdown)
+        self._autooff_timer : Timer = None
 
     def program_drive_limits(self):
         self.device.comm.connect()
@@ -163,9 +176,10 @@ class Laser:
         self.device.stop_tec()
         self.device.enable_interlock()
 
-    def set_current_as_percent(self, x:float, enforce_limits=True):
-        if enforce_limits:
-            self.program_drive_limits()
+    def set_current_as_percent(self, x:float, autooff=3*3600):
+        if not self.ready_to_operate():
+            raise RuntimeError("Laser not ready to operate, try calling disable_interlock_and_cool() or status()")
+
         device = self.device
         x = max(min(x,1), 0)
         device.comm.connect()
@@ -175,7 +189,31 @@ class Laser:
         device.set_current(x if x==0 else current.to('mA').value)
         set_current = device.get_current()
         print(f"...current: {set_current} mA")
+        if self._autooff_timer is not None:
+            self._autooff_timer.cancel()
+
+        if autooff > 0:
+            def autooff_callback():
+                print(f"Autooff timer expired after {autooff}, shutting down {self.name}.")
+                self.shutdown()
+            self._autooff_timer = Timer(int(autooff), autooff_callback)
+            self._autooff_timer.start()
+
         return set_current
+
+    def ready_to_operate(self):
+        """Determines readiness by checking device status flags"""
+        interlock_bitmask = (int(mainman_const.LOCK_STATE_LD_OVERCURRENT, 16) |int(mainman_const.LOCK_STATE_LD_OVERHEAT, 16) |
+                             int(mainman_const.LOCK_STATE_EXTERNAL_NTC_INTERLOCK, 16) | int(mainman_const.LOCK_STATE_TEC_ERROR, 16))
+
+        state = self.device.get_raw_status("state_of_device")
+        device_started = bool(state & (int(mainman_const.OPERATION_STATE_STARTED, 16) | int(mainman_const.INTERLOCK_DENIED, 16)))
+
+
+        interlocked = bool(self.device.get_raw_status("lock_status") & interlock_bitmask)
+        tec_running = self.device.is_tec_started()
+        print(f"tec_running: {tec_running}, interlocked: {interlocked}, started: {device_started}")
+        return device_started and tec_running and not interlocked
 
     def status(self):
         device = self.device
