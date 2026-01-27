@@ -139,7 +139,7 @@ LASER_DRIVER_SERIALS = {"1028": 8229,
                    "2330": 8226}
 
 class Laser:
-    def __init__(self, name: str, address: int = 1, MODBUS_PORT: str = "COM6"):
+    def __init__(self, name: str, address: int = 1, MODBUS_PORT: str = "COM6", register_atexit=True):
         self.name = name
         try:
             self.laser_properties = LASER_PROPERTIES[name]
@@ -147,7 +147,8 @@ class Laser:
             raise ValueError(f"Unknown laser {name}")
         self.device = ModbusDeviceFactory.get_device(MODBUS_PORT, slave_address=address)
         assert self.device.get_serial_number() == LASER_DRIVER_SERIALS[name], 'BAD BUS CONFIG, do not continue'
-        atexit.register(self.shutdown)
+        if register_atexit:
+            atexit.register(self.shutdown)
         self._autooff_timer : Timer = None
 
     def program_drive_limits(self):
@@ -196,7 +197,7 @@ class Laser:
             def autooff_callback():
                 print(f"Autooff timer expired after {autooff}, shutting down {self.name}.")
                 self.shutdown()
-            self._autooff_timer = Timer(int(autooff), autooff_callback)
+            self._autooff_timer = Timer(int(autooff), autooff_callback, daemon=True)
             self._autooff_timer.start()
 
         return set_current
