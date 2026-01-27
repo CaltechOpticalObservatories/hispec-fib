@@ -197,7 +197,8 @@ class Laser:
             def autooff_callback():
                 print(f"Autooff timer expired after {autooff}, shutting down {self.name}.")
                 self.shutdown()
-            self._autooff_timer = Timer(int(autooff), autooff_callback, daemon=True)
+            self._autooff_timer = Timer(int(autooff), autooff_callback)
+            self._autooff_timer.daemon = True
             self._autooff_timer.start()
 
         return set_current
