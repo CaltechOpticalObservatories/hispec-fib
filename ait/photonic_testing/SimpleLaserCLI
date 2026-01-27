@@ -69,13 +69,12 @@ def main():
     autooff_seconds = args.autooff_minutes * 60
 
     print(f"Initializing laser '{args.laser}' (addr={addr})")
-    l = Laser(args.laser, address=addr, MODBUS_PORT=MODBUS_PORT, register_atexit=False)
+    l = Laser(args.laser, address=addr, MODBUS_PORT=MODBUS_PORT, register_atexit=not args.no_shutdown)
 
     serial = l.device.get_serial_number()
     print(f"Serial number: {serial}")
     assert serial == LASER_DRIVER_SERIALS[args.laser], "BAD BUS CONFIG, do not continue"
 
-    # --- SAFETY TRY/FINALLY ---
     try:
         print(f"Setting '{args.laser}' laser to {args.power:0.1f}% power")
         l.disable_interlock_and_cool()
@@ -85,7 +84,6 @@ def main():
             print("WARN: Leaving laser enabled (--no-shutdown)")
             return
 
-        # Use autooff timer
         l.set_current_as_percent(power_fraction, autooff=autooff_seconds)
         print(f"Laser will auto-shutdown in {args.autooff_minutes:g} min")
 
@@ -95,19 +93,12 @@ def main():
             sleep_time = min(STATUS_INTERVAL, remaining)
             time.sleep(sleep_time)
             remaining -= sleep_time
-        print("\rAuto-shutdown complete.        ")
+
+        print("Giving 5 seconds for timer to automatically shut down laser")
+        time.sleep(5)
 
     except KeyboardInterrupt:
-        print("\nCTRL-C received — shutting down laser now.")
-    except Exception as e:
-        print(f"\nERROR encountered: {e}", file=sys.stderr)
-    finally:
-        if not args.no_shutdown:
-            try:
-                l.shutdown()
-                print("Laser shutdown complete.")
-            except Exception as e:
-                print(f"ERROR during shutdown: {e}", file=sys.stderr)
+        print("\nCTRL-C received — atexit register should shut down laser.")
 
 
 if __name__ == "__main__":
