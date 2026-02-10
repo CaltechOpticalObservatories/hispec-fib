@@ -10,6 +10,7 @@ from .maiman_modbus.utils import utils as mainman_const
 class LaserProperties:
     name: str
     model_number: str
+    nominal_current: float
     max_current: float
     dne_current: float
     threshold_current: float
@@ -23,6 +24,8 @@ class LaserProperties:
     tec_pid: tuple = None
     test_monitor_current: float = None
     ntc_t_coefficient: float = None
+    dlambda_dT: float = None
+    dlambda_dA: float = None
 
 #NB the pot that sets the OCP on the Maiman driver is https://www.digikey.com/en/products/detail/bourns-inc/3224W-1-203E/225661
 #with a 100ppm/degC coeff. the driver is 0-250 mA over the range of the pot.
@@ -35,7 +38,8 @@ TEC_PID_DFB = (20, 1000, 1000)
 
 LASER_1028 = LaserProperties(name="1028", model_number="FLPD-1028-50-DFB-BTF",
                              threshold_current=14.5 * u.mA,
-                             max_current=225 * u.mA,
+                             nominal_current=230 * u.mA,
+                             max_current=240 * u.mA,
                              dne_current=250 * u.mA,
                              tec_max_current=1.2 * u.A,
                              tec_pid=TEC_PID_DFB,
@@ -43,17 +47,19 @@ LASER_1028 = LaserProperties(name="1028", model_number="FLPD-1028-50-DFB-BTF",
                              wavelength=1028.01 * u.nm,
                              test_monitor_current=23.3 * u.uA,
                              efficiency=0.185 * u.mW / u.mA,
-                             # bias_current = 250*u.mA,
-                             # bias_voltage = 1.667 * u.V,
 
-                             operating_temp=25 * u.C,
+                             dlambda_dA=0.015 * u.nm / u.mA,
+                             dlambda_dT=0.12 * u.nm / u.K,
+
+                             operating_temp=25 * u.deg_C,
                              thermisistor=10 * u.kOhm,
                              isolation=30 * u.dB,
                              ntc_t_coefficient=-.044 / u.C)
 
 LASER_2330 = LaserProperties(name="2330", model_number="FLPD-2330-03-DFB-BTF",
                              threshold_current=24.9 * u.mA,
-                             max_current=119 * u.mA,
+                             nominal_current=114.2 * u.mA,  # calculated fromm test report for 3mA optical power
+                             max_current=120 * u.mA,
                              dne_current=135 * u.mA,
                              tec_max_current=1.2 * u.A,
                              tec_pid=TEC_PID_DFB,
@@ -61,16 +67,18 @@ LASER_2330 = LaserProperties(name="2330", model_number="FLPD-2330-03-DFB-BTF",
                              wavelength=2329.81 * u.nm,
                              test_monitor_current=None,
                              efficiency=0.031 * u.mW / u.mA,
-                             # bias_current = 120*u.mA,
-                             # bias_voltage = 3.105 * u.V,
 
-                             operating_temp=25 * u.C,
+                             dlambda_dA=0.015 * u.nm / u.mA,
+                             dlambda_dT=0.12 * u.nm / u.K,
+
+                             operating_temp=25 * u.deg_C,
                              thermisistor=10 * u.kOhm,
                              isolation=30 * u.dB,
                              ntc_t_coefficient=-.044 / u.C)
 
 LASER_1270 = LaserProperties(name="1270", model_number="1270LD-1-0-0",
                              threshold_current=8 * u.mA,
+                             nominal_current=60 * u.mA,
                              max_current=60 * u.mA,
                              dne_current=70 * u.mA,
                              tec_max_current=1 * u.A,
@@ -79,16 +87,17 @@ LASER_1270 = LaserProperties(name="1270", model_number="1270LD-1-0-0",
                              wavelength=1270 * u.nm,
                              test_monitor_current=None,
                              efficiency=.166 * u.mW / u.mA,
-                             # dlambda_dA=0.003*u.nm/u.mA,
-                             # dlambda_dT=0.08*u.nm/u.K,
+                             dlambda_dA=0.003*u.nm/u.mA,
+                             dlambda_dT=0.08*u.nm/u.K,
 
-                             operating_temp=25 * u.C,
+                             operating_temp=25 * u.deg_C,
                              thermisistor=10 * u.kOhm,
                              isolation=25 * u.dB,
                              ntc_t_coefficient=None)
 
 LASER_1430 = LaserProperties(name="1430", model_number="1430LD-1-0-0",
                              threshold_current=8 * u.mA,
+                             nominal_current=60 * u.mA,
                              max_current=60 * u.mA,
                              dne_current=70 * u.mA,
                              tec_max_current=1 * u.A,
@@ -97,16 +106,17 @@ LASER_1430 = LaserProperties(name="1430", model_number="1430LD-1-0-0",
                              wavelength=1430 * u.nm,
                              test_monitor_current=None,
                              efficiency=.166 * u.mW / u.mA,
-                             # dlambda_dA=0.003*u.nm/u.mA,
-                             # dlambda_dT=0.08*u.nm/u.K,
+                             dlambda_dA=0.003*u.nm/u.mA,
+                             dlambda_dT=0.08*u.nm/u.K,
 
-                             operating_temp=25 * u.C,
+                             operating_temp=25 * u.deg_C,
                              thermisistor=10 * u.kOhm,
                              isolation=25 * u.dB,
                              ntc_t_coefficient=None)
 
 LASER_1510 = LaserProperties(name="1510", model_number="15100LD-1-0-0",
                              threshold_current=8 * u.mA,
+                             nominal_current=60 * u.mA,
                              max_current=60 * u.mA,
                              dne_current=70 * u.mA,
                              tec_max_current=1 * u.A,
@@ -115,10 +125,10 @@ LASER_1510 = LaserProperties(name="1510", model_number="15100LD-1-0-0",
                              wavelength=1430 * u.nm,
                              test_monitor_current=None,
                              efficiency=.166 * u.mW / u.mA,
-                             # dlambda_dA=0.003*u.nm/u.mA,
-                             # dlambda_dT=0.08*u.nm/u.K,
+                             dlambda_dA=0.003*u.nm/u.mA,
+                             dlambda_dT=0.08*u.nm/u.K,
 
-                             operating_temp=25 * u.C,
+                             operating_temp=25 * u.deg_C,
                              thermisistor=10 * u.kOhm,
                              isolation=25 * u.dB,
                              ntc_t_coefficient=None)
@@ -145,6 +155,8 @@ class Laser:
             self.laser_properties = LASER_PROPERTIES[name]
         except KeyError:
             raise ValueError(f"Unknown laser {name}")
+        assert self.laser_properties.nominal_current<=self.laser_properties.max_current, 'Nominal current must be <= than max_current'
+        assert self.laser_properties.max_current<self.laser_properties.dne_current, 'Max current must be < than DNE_current'
         self.device = ModbusDeviceFactory.get_device(MODBUS_PORT, slave_address=address)
         assert self.device.get_serial_number() == LASER_DRIVER_SERIALS[name], 'BAD BUS CONFIG, do not continue'
         if register_atexit:
@@ -152,7 +164,6 @@ class Laser:
         self._autooff_timer : Timer = None
 
     def program_drive_limits(self):
-        self.device.comm.connect()
         print(f"Programming limits for {self.name}, Maiman driver: S/N {self.device.get_serial_number()}...")
         ocp_ma = self.device.get_current_protection_threshold()
         dne_ma = self.laser_properties.dne_current.value
@@ -163,7 +174,9 @@ class Laser:
         self.device.set_current_max(self.laser_properties.max_current.to(u.mA).value)
         self.device.set_tec_pid(*self.laser_properties.tec_pid)
 
-    def disable_interlock_and_cool(self):
+    def startup(self):
+        self.device.comm.connect()
+        self.device.enable_interlock()
         self.program_drive_limits()
         self.device.set_current(0)
         self.device.disable_interlock()
@@ -177,6 +190,17 @@ class Laser:
         self.device.stop_tec()
         self.device.enable_interlock()
 
+    @property
+    def nominal_optical_power(self):
+        return (self.device.get_current()*u.mA-self.laser_properties.threshold_current)*self.laser_properties.efficiency
+
+    @property
+    def nominal_wavelength(self):
+        delta_i =  (self.device.get_current()*u.mA-self.laser_properties.nominal_current)
+        delta_t = (self.device.get_tec_temperature_measured()*u.deg_C - self.laser_properties.operating_temp).value*u.K
+        shift = delta_t*self.laser_properties.dlambda_dT + delta_i*self.laser_properties.dlambda_dA
+        return (self.laser_properties.wavelength+shift).to(u.nm)
+
     def set_current_as_percent(self, x:float, autooff=3*3600):
         if not self.ready_to_operate():
             raise RuntimeError("Laser not ready to operate, try calling disable_interlock_and_cool() or status()")
@@ -184,12 +208,15 @@ class Laser:
         device = self.device
         x = max(min(x,1), 0)
         device.comm.connect()
-        range = self.laser_properties.max_current - self.laser_properties.threshold_current
+        range = self.laser_properties.nominal_current - self.laser_properties.threshold_current
         current = (range*x + self.laser_properties.threshold_current)
         print(f"Setting current to {x if x==0 else current} ")
         device.set_current(x if x==0 else current.to('mA').value)
         set_current = device.get_current()
-        print(f"...current: {set_current} mA")
+        print(f"...current: {set_current} mA, output power: {self.nominal_optical_power}, "
+              f"wavelength: {self.nominal_wavelength} (temp = {self.device.get_tec_temperature_measured()} C")
+
+
         if self._autooff_timer is not None:
             self._autooff_timer.cancel()
 
