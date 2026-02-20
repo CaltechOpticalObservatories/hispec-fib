@@ -77,7 +77,7 @@ def main():
 
     try:
         print(f"Setting '{args.laser}' laser to {args.power:0.1f}% power")
-        l.disable_interlock_and_cool()
+        l.startup()
 
         if args.no_shutdown:
             l.set_current_as_percent(power_fraction)
