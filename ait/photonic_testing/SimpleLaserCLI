@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+
+import argparse
+import sys
+import time
+from ait.photonic_testing.photonic_testing import *
+
+MODBUS_PORT = "/dev/ttyUSB0"
+LASER_ADDRESSES = {
+    "1028": 5,
+    "1270": 6,
+    "yj1430": 4,
+    "hk1430": 3,
+    "1510": 1,
+    "2330": 2,
+}
+
+DEFAULT_AUTOOFF_MINUTES = 1
+STATUS_INTERVAL = 5
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description="Initialize a single laser and set its power")
+    p.add_argument("laser", nargs="?", choices=LASER_ADDRESSES.keys(), help="Laser name")
+    p.add_argument("power", nargs="?", type=float, help="Power as percent of full scale (0–100)")
+    p.add_argument("--no-shutdown", action="store_true", help="Do not shut down laser on exit")
+    p.add_argument("--autooff-minutes", type=float, default=DEFAULT_AUTOOFF_MINUTES,
+                   help=f"Auto-shutdown timer in minutes (default {DEFAULT_AUTOOFF_MINUTES})")
+    p.add_argument("--list", action="store_true", help="List available lasers and exit")
+    p.add_argument("--shutdown-all", action="store_true", help="Shutdown all lasers immediately and exit")
+    return p.parse_args()
+
+
+def shutdown_all():
+    print("Shutting down all lasers...")
+    for name, addr in LASER_ADDRESSES.items():
+        try:
+            l = Laser(name, address=addr, MODBUS_PORT=MODBUS_PORT, register_atexit=False)
+            l.shutdown()
+            print(f"  {name:8s} shutdown complete")
+        except Exception as e:
+            print(f"  ERROR shutting down {name}: {e}")
+    print("All lasers processed.")
+
+
+def main():
+    args = parse_args()
+
+    if args.list:
+        print("Available lasers:")
+        for name, addr in LASER_ADDRESSES.items():
+            print(f"  {name:8s}  addr={addr}")
+        return
+
+    if args.shutdown_all:
+        shutdown_all()
+        return
+
+    if args.laser is None or args.power is None:
+        print("ERROR: Must supply LASER and POWER unless using --list or --shutdown-all", file=sys.stderr)
+        sys.exit(1)
+
+    if not (0.0 <= args.power <= 100.0):
+        print("ERROR: Power must be between 0 and 100", file=sys.stderr)
+        sys.exit(1)
+
+    addr = LASER_ADDRESSES[args.laser]
+    power_fraction = args.power / 100.0
+    autooff_seconds = args.autooff_minutes * 60
+
+    print(f"Initializing laser '{args.laser}' (addr={addr})")
+    l = Laser(args.laser, address=addr, MODBUS_PORT=MODBUS_PORT, register_atexit=not args.no_shutdown)
+
+    serial = l.device.get_serial_number()
+    print(f"Serial number: {serial}")
+    assert serial == LASER_DRIVER_SERIALS[args.laser], "BAD BUS CONFIG, do not continue"
+
+    try:
+        print(f"Setting '{args.laser}' laser to {args.power:0.1f}% power")
+        l.startup()
+
+        if args.no_shutdown:
+            l.set_current_as_percent(power_fraction)
+            print("WARN: Leaving laser enabled (--no-shutdown)")
+            return
+
+        l.set_current_as_percent(power_fraction, autooff=autooff_seconds)
+        print(f"Laser will auto-shutdown in {args.autooff_minutes:g} min")
+
+        remaining = autooff_seconds
+        while remaining > 0:
+            print(f"\rAuto-shutdown in {int(remaining):3d} s...", end="", flush=True)
+            sleep_time = min(STATUS_INTERVAL, remaining)
+            time.sleep(sleep_time)
+            remaining -= sleep_time
+
+        print("Giving 5 seconds for timer to automatically shut down laser")
+        time.sleep(5)
+
+    except KeyboardInterrupt:
+        print("\nCTRL-C received — atexit register should shut down laser.")
+
+
+if __name__ == "__main__":
+    main()

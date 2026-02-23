@@ -214,7 +214,7 @@ class Laser:
         device.set_current(x if x==0 else current.to('mA').value)
         set_current = device.get_current()
         print(f"...current: {set_current} mA, output power: {self.nominal_optical_power}, "
-              f"wavelength: {self.nominal_wavelength} (temp = {self.device.get_tec_temperature_measured()} C")
+              f"wavelength: {self.nominal_wavelength} (temp = {self.device.get_tec_temperature_measured()} C)")
 
 
         if self._autooff_timer is not None:
