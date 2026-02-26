@@ -2,6 +2,8 @@ import atexit
 from dataclasses import dataclass
 import astropy.units as u
 from threading import Timer
+import numpy as np
+from dask.array import remainder
 
 from .maiman_modbus.factory import ModbusDeviceFactory
 from .maiman_modbus.utils import utils as mainman_const
@@ -17,6 +19,7 @@ class LaserProperties:
     efficiency: float
     wavelength: float
     test_monitor_current: float
+    operating_temp_range: tuple[float, float] = None
     operating_temp: float = None
     thermisistor: float = None
     isolation: float = None
@@ -35,22 +38,23 @@ class LaserProperties:
 TEC_PID_DEFAULT = (100, 1000, 0)
 TEC_PID_DFB = (20, 1000, 1000)
 
-
+#Driver limited to +15-40 deg tec control range
 LASER_1028 = LaserProperties(name="1028", model_number="FLPD-1028-50-DFB-BTF",
                              threshold_current=14.5 * u.mA,
-                             nominal_current=230 * u.mA,
-                             max_current=240 * u.mA,
-                             dne_current=250 * u.mA,
+                             nominal_current=250 * u.mA,
+                             max_current=250 * u.mA,
+                             dne_current=275 * u.mA,  # 110% per V. Mazo Frankfurt laser
                              tec_max_current=1.2 * u.A,
                              tec_pid=TEC_PID_DFB,
 
                              wavelength=1028.01 * u.nm,
-                             test_monitor_current=23.3 * u.uA,
+                             test_monitor_current=23.3 * u.uA, # @43.8mA optical power
                              efficiency=0.185 * u.mW / u.mA,
 
                              dlambda_dA=0.015 * u.nm / u.mA,
-                             dlambda_dT=0.12 * u.nm / u.K,
+                             dlambda_dT=0.12 * u.nm / u.deg_C,
 
+                             operating_temp_range=(15 * u.deg_C, 40* u.deg_C),
                              operating_temp=25 * u.deg_C,
                              thermisistor=10 * u.kOhm,
                              isolation=30 * u.dB,
@@ -60,17 +64,18 @@ LASER_2330 = LaserProperties(name="2330", model_number="FLPD-2330-03-DFB-BTF",
                              threshold_current=24.9 * u.mA,
                              nominal_current=114.2 * u.mA,  # calculated fromm test report for 3mA optical power
                              max_current=120 * u.mA,
-                             dne_current=135 * u.mA,
+                             dne_current=132 * u.mA, # 110% per V. Mazo Frankfurt laser
                              tec_max_current=1.2 * u.A,
                              tec_pid=TEC_PID_DFB,
 
-                             wavelength=2329.81 * u.nm,
+                             wavelength=2329.81 * u.nm,  # may have been at 40 deg C!!!
                              test_monitor_current=None,
                              efficiency=0.031 * u.mW / u.mA,
 
                              dlambda_dA=0.015 * u.nm / u.mA,
-                             dlambda_dT=0.12 * u.nm / u.K,
+                             dlambda_dT=0.12 * u.nm / u.deg_C,
 
+                             operating_temp_range=(15 * u.deg_C, 40 * u.deg_C),
                              operating_temp=25 * u.deg_C,
                              thermisistor=10 * u.kOhm,
                              isolation=30 * u.dB,
@@ -88,8 +93,9 @@ LASER_1270 = LaserProperties(name="1270", model_number="1270LD-1-0-0",
                              test_monitor_current=None,
                              efficiency=.166 * u.mW / u.mA,
                              dlambda_dA=0.003*u.nm/u.mA,
-                             dlambda_dT=0.08*u.nm/u.K,
+                             dlambda_dT=0.08*u.nm/u.deg_C,
 
+                             operating_temp_range=(15 * u.deg_C, 40 * u.deg_C),  # loosely, DS specifies case temp of -5-60
                              operating_temp=25 * u.deg_C,
                              thermisistor=10 * u.kOhm,
                              isolation=25 * u.dB,
@@ -107,8 +113,9 @@ LASER_1430 = LaserProperties(name="1430", model_number="1430LD-1-0-0",
                              test_monitor_current=None,
                              efficiency=.166 * u.mW / u.mA,
                              dlambda_dA=0.003*u.nm/u.mA,
-                             dlambda_dT=0.08*u.nm/u.K,
+                             dlambda_dT=0.08*u.nm/u.deg_C,
 
+                             operating_temp_range=(15 * u.deg_C, 40 * u.deg_C),  # loosely, DS specifies case temp of -5-60
                              operating_temp=25 * u.deg_C,
                              thermisistor=10 * u.kOhm,
                              isolation=25 * u.dB,
@@ -126,8 +133,9 @@ LASER_1510 = LaserProperties(name="1510", model_number="15100LD-1-0-0",
                              test_monitor_current=None,
                              efficiency=.166 * u.mW / u.mA,
                              dlambda_dA=0.003*u.nm/u.mA,
-                             dlambda_dT=0.08*u.nm/u.K,
+                             dlambda_dT=0.08*u.nm/u.deg_C,
 
+                             operating_temp_range=(15 * u.deg_C, 40 * u.deg_C), # loosely, DS specifies case temp of -5-60
                              operating_temp=25 * u.deg_C,
                              thermisistor=10 * u.kOhm,
                              isolation=25 * u.dB,
@@ -196,10 +204,97 @@ class Laser:
 
     @property
     def nominal_wavelength(self):
-        delta_i =  (self.device.get_current()*u.mA-self.laser_properties.nominal_current)
-        delta_t = (self.device.get_tec_temperature_measured()*u.deg_C - self.laser_properties.operating_temp).value*u.K
+        current = self.device.get_current()
+        if current==0:
+            return self.laser_properties.wavelength.to(u.nm)
+
+        delta_i =  (current*u.mA-self.laser_properties.nominal_current)
+        delta_t = (self.device.get_tec_temperature_measured()*u.deg_C - self.laser_properties.operating_temp)
         shift = delta_t*self.laser_properties.dlambda_dT + delta_i*self.laser_properties.dlambda_dA
         return (self.laser_properties.wavelength+shift).to(u.nm)
+
+    def tune_wavelength(self, desired_brightness:float, wavelength:u.Quantity, use_current=True, use_temp=True,
+                        maximum_power_shift=np.inf, autooff=3*3600):
+        """
+        Tune with temp then with power unless modality disallowed
+
+        """
+        if not self.ready_to_operate():
+            raise RuntimeError("Laser not ready to operate, try calling disable_interlock_and_cool() or status()")
+
+        if desired_brightness<0:
+            raise ValueError(f"Desired brightness must be [0-1]")
+
+        if desired_brightness==0:
+            self.device.set_current(0)
+            return None
+
+
+        current_range = self.laser_properties.nominal_current - self.laser_properties.threshold_current
+        desiredI = min(self.laser_properties.threshold_current+current_range * desired_brightness, self.laser_properties.max_current)
+
+        initial_l = (desiredI - self.laser_properties.nominal_current)*self.laser_properties.dlambda_dA + self.laser_properties.wavelength
+
+        # Tune with T
+        dl = wavelength-initial_l
+        dt = dl/self.laser_properties.dlambda_dT
+        desiredT= self.laser_properties.operating_temp+dt
+        minT, maxT = min(self.laser_properties.operating_temp_range), max(self.laser_properties.operating_temp_range)
+        newT = np.round(max(min(maxT, desiredT), minT), 2)
+
+        if use_temp:
+            dl_fromT = self.laser_properties.dlambda_dT * (newT-self.laser_properties.operating_temp)
+        else:
+            dl_fromT = 0 *u.nm
+            newT = self.laser_properties.operating_temp
+
+
+        # Then finetune with I
+        dl_remain = dl - dl_fromT
+
+        dI = dl_remain/self.laser_properties.dlambda_dA
+        dI_allowed = maximum_power_shift*current_range
+        if abs(dI)>dI_allowed:
+            dI = np.sign(dI)*dI_allowed
+
+        newI = round(max(min(desiredI+dI, self.laser_properties.max_current), self.laser_properties.threshold_current),1)
+
+        if use_current:
+            dl_fromI = (newI-self.laser_properties.nominal_current)*self.laser_properties.dlambda_dA
+        else:
+            dl_fromI = 0 *u.nm
+            newI = desiredI
+
+        # self.device.set_tec_temperature(newT.to_value(u.deg_C))
+        # self.device.set_current(newI.to_value(u.mA))
+        # self.auto_off(autooff)
+
+        lI_err = .01*newI* self.laser_properties.dlambda_dI
+        lT_err = .01*newT*self.laser_properties.dlambda_dT
+
+        print(f'Requested tuning {self.laser_properties.wavelength:.3f} to {wavelength:.3f} at'
+              f' {desired_brightness*100:.1f}±{maximum_power_shift*100:.2f}% flux.\n'
+              f'    TEC Temp: {newT}, resulting dl {dl_fromT:.3f}.\n'
+              f'    Drive current: {newI}, resulting dl {dl_fromI:.3f}.\n'
+              f'    Optical Power: {(newI-self.laser_properties.threshold_current)*self.laser_properties.efficiency:.2f}\n'
+              f'    Laser power difference from request: {(newI-desiredI)*self.laser_properties.efficiency:.2f}\n'
+              f'    Wavelength difference from request: {(wavelength - (initial_l+dl_fromI+dl_fromT)).to("nm"):.3f}\n'
+              f'    Note drive accuracy: {np.sqrt(lT_err**2 + lI_err**2):.3f}')
+
+        return self.nominal_wavelength
+
+    def auto_off(self, autooff):
+
+        if self._autooff_timer is not None:
+            self._autooff_timer.cancel()
+
+        if autooff > 0:
+            def autooff_callback():
+                print(f"Autooff timer expired after {autooff}, shutting down {self.name}.")
+                self.shutdown()
+            self._autooff_timer = Timer(int(autooff), autooff_callback)
+            self._autooff_timer.daemon = True
+            self._autooff_timer.start()
 
     def set_current_as_percent(self, x:float, autooff=3*3600):
         if not self.ready_to_operate():
@@ -216,18 +311,7 @@ class Laser:
         print(f"...current: {set_current} mA, output power: {self.nominal_optical_power}, "
               f"wavelength: {self.nominal_wavelength} (temp = {self.device.get_tec_temperature_measured()} C)")
 
-
-        if self._autooff_timer is not None:
-            self._autooff_timer.cancel()
-
-        if autooff > 0:
-            def autooff_callback():
-                print(f"Autooff timer expired after {autooff}, shutting down {self.name}.")
-                self.shutdown()
-            self._autooff_timer = Timer(int(autooff), autooff_callback)
-            self._autooff_timer.daemon = True
-            self._autooff_timer.start()
-
+        self.auto_off(autooff)
         return set_current
 
     def ready_to_operate(self):
@@ -271,6 +355,7 @@ class Laser:
 
         print("Current Set Calibration:", device.get_current_set_calibration())
 
+        print("PCB Temperature:", device.get_pcb_temperature_measured())
         print("TEC PID:", device.get_tec_pid())
         print("TEC Voltage:", device.get_tec_voltage())
         print("TEC Current Limit:", device.get_tec_current_limit())
