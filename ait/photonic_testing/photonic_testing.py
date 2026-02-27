@@ -387,8 +387,8 @@ class Laser:
 
         if autooff > 0:
             def autooff_callback():
-                print(f"Autooff timer expired after {autooff}, shutting down {self.name}.")
-                self.shutdown()
+                print(f"Autooff timer expired after {autooff}, turning off laser current {self.name}.")
+                self.device.set_current(0)
             self._autooff_timer = Timer(int(autooff), autooff_callback)
             self._autooff_timer.daemon = True
             self._autooff_timer.start()
@@ -405,8 +405,8 @@ class Laser:
         print(f"Setting current to {x if x==0 else current} ")
         device.set_current(x if x==0 else current.to('mA').value)
         set_current = device.get_current()
-        print(f"...current: {set_current} mA, output power: {self.nominal_optical_power}, "
-              f"wavelength: {self.nominal_wavelength} (temp: {self.device.get_tec_temperature_measured()*u.deg_C})")
+        print(f"...current: {set_current} mA, output power: {self.nominal_optical_power:.2f}, "
+              f"wavelength: {self.nominal_wavelength:.3f} (temp: {self.device.get_tec_temperature_measured()*u.deg_C:.2f})")
 
         self.auto_off(autooff)
         return set_current
