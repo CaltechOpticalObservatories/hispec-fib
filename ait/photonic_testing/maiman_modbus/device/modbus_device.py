@@ -205,9 +205,9 @@ class ModbusDevice:
         divider =  self.config.tec_commands.get(REGISTER_TEC_CURRENT, {}).get("divider", 1)
         return raw / divider
 
-    @modbus_set(REGISTER_TEC_TEMPERATURE)
+    @modbus_set(REGISTER_TEC_TEMPERATURE_VALUE)
     def set_tec_temperature(self, value):
-        divider = self.get_divider(REGISTER_TEC_TEMPERATURE)
+        divider =  self.config.tec_commands.get(REGISTER_TEC_TEMPERATURE, {}).get("divider", 1)
         return int(value * divider)
 
     @modbus_get(REGISTER_TEC_VOLTAGE)
