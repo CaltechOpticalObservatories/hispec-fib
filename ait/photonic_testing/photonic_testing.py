@@ -173,26 +173,30 @@ class Laser:
 
     def program_drive_limits(self):
         print(f"Programming limits for {self.name}, Maiman driver: S/N {self.device.get_serial_number()}...")
+        self.device.enable_interlock()
         ocp_ma = self.device.get_current_protection_threshold()
         dne_ma = self.laser_properties.dne_current.value
         if ocp_ma > dne_ma:
+            self.device.enable_interlock()
+            self.device.set_current(0)
+            self.device.stop_device()
+            self.device.stop_tec()
             raise RuntimeError(f"Current DRV OCP ({ocp_ma} mA) potentiometer is too "
-                               f"high for laser {self.name} (DNE {dne_ma} mA)")
+                               f"high for laser {self.name} (DNE {dne_ma} mA). Unsafe to continue")
+
         self.device.set_tec_current_limit(self.laser_properties.tec_max_current.to(u.A).value)
         self.device.set_current_max(self.laser_properties.max_current.to(u.mA).value)
         self.device.set_tec_pid(*self.laser_properties.tec_pid)
 
     def startup(self):
-        self.device.comm.connect()
-        self.device.enable_interlock()
         self.program_drive_limits()
         self.device.set_current(0)
         self.device.disable_interlock()
+        self.device.set_tec_temperature(self.device.get_tec_temperature_measured())
         self.device.start_tec()
         self.device.start_device()
 
     def shutdown(self):
-        self.device.comm.connect()
         self.device.set_current(0)
         self.device.stop_device()
         self.device.stop_tec()
