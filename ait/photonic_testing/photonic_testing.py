@@ -218,7 +218,7 @@ class Laser:
         return (self.laser_properties.wavelength+shift).to(u.nm)
 
     def tune_wavelength(self, desired_brightness:float, wavelength:u.Quantity, use_current=True, use_temp=True,
-                        maximum_power_shift=np.inf, autooff=3*3600):
+                        maximum_power_shift=np.inf, autooff=3*3600, apply=False):
         """
         Tune with temp then with power unless modality disallowed
 
@@ -269,11 +269,12 @@ class Laser:
             dl_fromI = 0 *u.nm
             newI = desiredI
 
-        # self.device.set_tec_temperature(newT.to_value(u.deg_C))
-        # self.device.set_current(newI.to_value(u.mA))
-        # self.auto_off(autooff)
+        if apply:
+            self.device.set_tec_temperature(newT.to_value(u.deg_C))
+            self.device.set_current(newI.to_value(u.mA))
+            self.auto_off(autooff)
 
-        lI_err = .01*newI* self.laser_properties.dlambda_dI
+        lI_err = .01*newI* self.laser_properties.dlambda_dA
         lT_err = .01*newT*self.laser_properties.dlambda_dT
 
         print(f'Requested tuning {self.laser_properties.wavelength:.3f} to {wavelength:.3f} at'
@@ -313,7 +314,7 @@ class Laser:
         device.set_current(x if x==0 else current.to('mA').value)
         set_current = device.get_current()
         print(f"...current: {set_current} mA, output power: {self.nominal_optical_power}, "
-              f"wavelength: {self.nominal_wavelength} (temp = {self.device.get_tec_temperature_measured()} C)")
+              f"wavelength: {self.nominal_wavelength} (temp: {self.device.get_tec_temperature_measured()*u.deg_C})")
 
         self.auto_off(autooff)
         return set_current
@@ -359,7 +360,6 @@ class Laser:
 
         print("Current Set Calibration:", device.get_current_set_calibration())
 
-        print("PCB Temperature:", device.get_pcb_temperature_measured())
         print("TEC PID:", device.get_tec_pid())
         print("TEC Voltage:", device.get_tec_voltage())
         print("TEC Current Limit:", device.get_tec_current_limit())
