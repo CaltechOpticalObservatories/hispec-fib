@@ -1,7 +1,8 @@
 import atexit
+import time
 from dataclasses import dataclass
 import astropy.units as u
-from threading import Timer
+from threading import Timer, Thread
 import numpy as np
 from dask.array import remainder
 
@@ -29,6 +30,20 @@ class LaserProperties:
     ntc_t_coefficient: float = None
     dlambda_dT: float = None
     dlambda_dA: float = None
+
+
+@dataclass
+class LaserMonitorData:
+    data: np.recarray
+    cadence_hz: float
+    duration_s: float
+    start_time_s: float
+    _count: int = 0
+    _thread: Thread | None = None
+
+    def get_data(self) -> np.recarray:
+        """Return data collected so far. Do not mutate the returned data."""
+        return self.data[:self._count]
 
 #NB the pot that sets the OCP on the Maiman driver is https://www.digikey.com/en/products/detail/bourns-inc/3224W-1-203E/225661
 #with a 100ppm/degC coeff. the driver is 0-250 mA over the range of the pot.
@@ -287,6 +302,83 @@ class Laser:
               f'    Note drive accuracy: {np.sqrt(lT_err**2 + lI_err**2):.3f}')
 
         return self.nominal_wavelength
+
+    def monitor_diode(self, duration_s: float, cadence_hz: float = 100.0) -> LaserMonitorData:
+        """
+        Monitor TEC temp/voltage/current, PCB temp, and laser diode current/voltage.
+
+        Data fields (units):
+            t_s, tec_temp_c, tec_voltage_v, tec_current_a, board_temp_c,
+            diode_current_ma, diode_voltage_v
+        """
+        if duration_s <= 0:
+            raise ValueError("duration_s must be > 0")
+        if cadence_hz <= 0:
+            raise ValueError("cadence_hz must be > 0")
+
+        period_s = 1.0 / cadence_hz
+        num_samples = max(1, int(np.ceil(duration_s * cadence_hz)))
+        dtype = [
+            ("t_s", "f8"),
+            ("tec_temp_c", "f4"),
+            ("tec_voltage_v", "f4"),
+            ("tec_current_a", "f4"),
+            ("diode_current_ma", "f4"),
+            ("diode_voltage_v", "f4"),
+        ]
+        data = np.zeros(num_samples, dtype=dtype).view(np.recarray)
+        monitor = LaserMonitorData(
+            data=data,
+            cadence_hz=cadence_hz,
+            duration_s=duration_s,
+            start_time_s=time.time(),
+        )
+
+        def _run():
+            device = self.device
+            device.comm.connect()
+            start = time.perf_counter()
+            for i in range(num_samples):
+                now = time.perf_counter()
+                data[i] = (
+                    now - start,
+                    device.get_tec_temperature_measured(),
+                    device.get_tec_voltage(),
+                    device.get_tec_current_measured(),
+                    device.get_current_measured(),
+                    device.get_voltage_measured(),
+                )
+                monitor._count = i + 1
+                next_time = start + (i + 1) * period_s
+                sleep_s = next_time - time.perf_counter()
+                if sleep_s > 0:
+                    time.sleep(sleep_s)
+
+        thread = Thread(target=_run, daemon=True)
+        monitor._thread = thread
+        thread.start()
+        return monitor
+
+    def tune_and_monitor(self, desired_brightness: float, wavelength: u.Quantity, duration_s: float,
+                         cadence_hz: float = 100.0, **tune_kwargs) -> LaserMonitorData:
+        """Tune wavelength (applying settings) then start monitoring and return the monitor object."""
+        apply = tune_kwargs.pop("apply", True)
+        self.tune_wavelength(desired_brightness, wavelength, apply=apply, **tune_kwargs)
+        return self.monitor_diode(duration_s=duration_s, cadence_hz=cadence_hz)
+
+    @staticmethod
+    def compute_power_and_wavelength(laser_properties: LaserProperties, tec_temp_c, diode_current_ma):
+        """Compute optical power and wavelength from TEC temp and diode current arrays."""
+        tec_temp = np.asarray(tec_temp_c) * u.deg_C
+        diode_current = np.asarray(diode_current_ma) * u.mA
+
+        power = (diode_current - laser_properties.threshold_current) * laser_properties.efficiency
+        delta_i = diode_current - laser_properties.nominal_current
+        delta_t = tec_temp - laser_properties.operating_temp
+        wavelength = (laser_properties.wavelength + delta_t * laser_properties.dlambda_dT +
+                      delta_i * laser_properties.dlambda_dA)
+
+        return power.to(u.mW), wavelength.to(u.nm)
 
     def auto_off(self, autooff):
 
