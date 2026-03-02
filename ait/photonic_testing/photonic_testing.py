@@ -209,7 +209,6 @@ class Laser:
         self.device.disable_interlock()
         self.device.set_tec_temperature(self.device.get_tec_temperature_measured())
         self.device.start_tec()
-        self.device.start_device()
 
     def shutdown(self):
         self.device.set_current(0)
@@ -291,6 +290,7 @@ class Laser:
             self.device.set_tec_temperature(newT.to_value(u.deg_C))
             self.device.set_current(newI.to_value(u.mA))
             self.auto_off(autooff)
+            self.device.start_device()
 
         lI_err = .01*newI* self.laser_properties.dlambda_dA
         lT_err = .01*newT*self.laser_properties.dlambda_dT
@@ -393,6 +393,7 @@ class Laser:
             def autooff_callback():
                 print(f"Autooff timer expired after {autooff}, turning off laser current {self.name}.")
                 self.device.set_current(0)
+                self.device.stop_device()
             self._autooff_timer = Timer(int(autooff), autooff_callback)
             self._autooff_timer.daemon = True
             self._autooff_timer.start()
@@ -410,7 +411,7 @@ class Laser:
 
         device = self.device
         x = max(min(x,1), 0)
-        device.comm.connect()
+
         range = self.laser_properties.nominal_current - self.laser_properties.threshold_current
         current = (range*x + self.laser_properties.threshold_current)
         print(f"Setting current to {x if x==0 else current}... ")
@@ -432,8 +433,7 @@ class Laser:
 
         interlocked = bool(self.device.get_raw_status("lock_status") & interlock_bitmask)
         tec_running = self.device.is_tec_started()
-        print(f"tec_running: {tec_running}, interlocked: {interlocked}, started: {device_started}")
-        return device_started and tec_running and not interlocked
+        return tec_running and not interlocked
 
     def status(self, verbose=True):
         device = self.device
