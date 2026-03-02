@@ -306,7 +306,7 @@ class Laser:
 
         return self.nominal_wavelength
 
-    def monitor_diode(self, duration_s: float, cadence_hz: float = 100.0) -> LaserMonitorData:
+    def monitor_diode(self, duration_s: float, cadence_hz: float = 10.0) -> LaserMonitorData:
         """
         Monitor TEC temp/voltage/current, PCB temp, and laser diode current/voltage.
 
@@ -318,6 +318,8 @@ class Laser:
             raise ValueError("duration_s must be > 0")
         if cadence_hz <= 0:
             raise ValueError("cadence_hz must be > 0")
+        if cadence_hz > 11:
+            raise ValueError("cadence_hz must be <= 11, seems to fail around 12 Hz")
 
         period_s = 1.0 / cadence_hz
         num_samples = max(1, int(np.ceil(duration_s * cadence_hz)))
@@ -339,15 +341,14 @@ class Laser:
 
         def _run():
             device = self.device
-            device.comm.connect()
             start = time.perf_counter()
             for i in range(num_samples):
                 now = time.perf_counter()
                 data[i] = (
                     now - start,
                     device.get_tec_temperature_measured(),
-                    device.get_tec_voltage(),
-                    device.get_tec_current_measured(),
+                    device.get_tec_voltage(),  # MAXUINT16 seems to mean TEC is off via PID command allowing it to heat
+                    device.get_tec_current_measured(),  # MAXUINT16 seems to mean TEC is off via PID command allowing it to heat
                     device.get_current_measured(),
                     device.get_voltage_measured(),
                 )
