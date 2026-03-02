@@ -147,7 +147,7 @@ class ModbusDevice:
 
     @modbus_get(REGISTER_CURRENT_MEASURED)
     def get_current_measured(self, raw):
-        divider = self.config.parameters.get(REGISTER_CURRENT, {}).get("divider_measured", 1)
+        divider = self.get_divider(REGISTER_CURRENT)
         return raw / divider
 
     @modbus_get(REGISTER_VOLTAGE_MEASURED)
