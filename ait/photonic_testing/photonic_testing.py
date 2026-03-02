@@ -13,7 +13,7 @@ from .maiman_modbus.utils import utils as mainman_const
 class LaserProperties:
     name: str
     model_number: str
-    nominal_current: float
+    nominal_current: float  #the "full power current" may be<= max_current, used for computing percentage of drive
     max_current: float
     dne_current: float
     threshold_current: float
@@ -77,9 +77,9 @@ LASER_1028 = LaserProperties(name="1028", model_number="FLPD-1028-50-DFB-BTF",
 
 LASER_2330 = LaserProperties(name="2330", model_number="FLPD-2330-03-DFB-BTF",
                              threshold_current=24.9 * u.mA,
-                             nominal_current=114.2 * u.mA,  # calculated fromm test report for 3mA optical power
+                             nominal_current=120.0 * u.mA,
                              max_current=120 * u.mA,
-                             dne_current=132 * u.mA, # 110% per V. Mazo Frankfurt laser
+                             dne_current=135 * u.mA, # ~110% per V. Mazo Frankfurt laser
                              tec_max_current=1.2 * u.A,
                              tec_pid=TEC_PID_DFB,
 
@@ -268,7 +268,7 @@ class Laser:
             newT = self.laser_properties.operating_temp
 
 
-        # Then finetune with I
+        # Then fine tune with I
         dl_remain = dl - dl_fromT
 
         dI = dl_remain/self.laser_properties.dlambda_dA
