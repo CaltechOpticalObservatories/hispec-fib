@@ -53,6 +53,13 @@ class LaserMonitorData:
 TEC_PID_DEFAULT = (100, 1000, 0)
 TEC_PID_DFB = (20, 1000, 1000)
 
+DEFAULT_OPERATING_TEMP_RANGE = (17 * u.deg_C, 38* u.deg_C)
+
+#room temp to -10c
+# RuntimeError: Current DRV OCP (136.1 mA) potentiometer is too high for laser 2330 (DNE 135.0 mA). Unsafe to continue
+# RuntimeError: Current DRV OCP (70.1 mA) potentiometer is too high for laser yj1430 (DNE 70.0 mA). Unsafe to continue
+#RuntimeError: Current DRV OCP (70.5 mA) potentiometer is too high for laser 1270 (DNE 70.0 mA). Unsafe to continue
+#RuntimeError: Current DRV OCP (70.5 mA) potentiometer is too high for laser 1510 (DNE 70.0 mA). Unsafe to continue
 #Driver limited to +15-40 deg tec control range
 LASER_1028 = LaserProperties(name="1028", model_number="FLPD-1028-50-DFB-BTF",
                              threshold_current=14.5 * u.mA,
@@ -69,7 +76,7 @@ LASER_1028 = LaserProperties(name="1028", model_number="FLPD-1028-50-DFB-BTF",
                              dlambda_dA=0.015 * u.nm / u.mA,
                              dlambda_dT=0.12 * u.nm / u.deg_C,
 
-                             operating_temp_range=(15 * u.deg_C, 40* u.deg_C),
+                             operating_temp_range=DEFAULT_OPERATING_TEMP_RANGE,
                              operating_temp=25 * u.deg_C,
                              thermisistor=10 * u.kOhm,
                              isolation=30 * u.dB,
@@ -90,7 +97,7 @@ LASER_2330 = LaserProperties(name="2330", model_number="FLPD-2330-03-DFB-BTF",
                              dlambda_dA=0.015 * u.nm / u.mA,
                              dlambda_dT=0.12 * u.nm / u.deg_C,
 
-                             operating_temp_range=(15 * u.deg_C, 40 * u.deg_C),
+                             operating_temp_range=DEFAULT_OPERATING_TEMP_RANGE,
                              operating_temp=25 * u.deg_C,
                              thermisistor=10 * u.kOhm,
                              isolation=30 * u.dB,
@@ -130,7 +137,7 @@ LASER_1430 = LaserProperties(name="1430", model_number="1430LD-1-0-0",
                              dlambda_dA=0.003*u.nm/u.mA,
                              dlambda_dT=0.08*u.nm/u.deg_C,
 
-                             operating_temp_range=(15 * u.deg_C, 40 * u.deg_C),  # loosely, DS specifies case temp of -5-60
+                             operating_temp_range=DEFAULT_OPERATING_TEMP_RANGE,  # loosely, DS specifies case temp of -5-60
                              operating_temp=25 * u.deg_C,
                              thermisistor=10 * u.kOhm,
                              isolation=25 * u.dB,
@@ -144,13 +151,13 @@ LASER_1510 = LaserProperties(name="1510", model_number="15100LD-1-0-0",
                              tec_max_current=1 * u.A,
                              tec_pid=TEC_PID_DEFAULT,
 
-                             wavelength=1430 * u.nm,
+                             wavelength=1510 * u.nm,
                              test_monitor_current=None,
                              efficiency=.166 * u.mW / u.mA,
                              dlambda_dA=0.003*u.nm/u.mA,
                              dlambda_dT=0.08*u.nm/u.deg_C,
 
-                             operating_temp_range=(15 * u.deg_C, 40 * u.deg_C), # loosely, DS specifies case temp of -5-60
+                             operating_temp_range=DEFAULT_OPERATING_TEMP_RANGE, # loosely, DS specifies case temp of -5-60
                              operating_temp=25 * u.deg_C,
                              thermisistor=10 * u.kOhm,
                              isolation=25 * u.dB,
@@ -206,15 +213,15 @@ class Laser:
     def startup(self):
         self.program_drive_limits()
         self.device.set_current(0)
-        self.device.disable_interlock()
+        self.device.disable_interlock()  # will not restart tec or device (enable device and start tec have no effect while interlocked
         self.device.set_tec_temperature(self.device.get_tec_temperature_measured())
         self.device.start_tec()
 
     def shutdown(self):
         self.device.set_current(0)
-        self.device.stop_device()
+        self.device.stop_device()  # stops laser only, not tec
         self.device.stop_tec()
-        self.device.enable_interlock()
+        self.device.enable_interlock()  # inhibits device and tec
 
     @property
     def nominal_optical_power(self):
@@ -306,7 +313,7 @@ class Laser:
 
         return self.nominal_wavelength
 
-    def monitor_diode(self, duration_s: float, cadence_hz: float = 10.0) -> LaserMonitorData:
+    def monitor_diode(self, duration_s: float, cadence_hz: float = 10.0, tec=True, laser=True) -> LaserMonitorData:
         """
         Monitor TEC temp/voltage/current, PCB temp, and laser diode current/voltage.
 
@@ -318,8 +325,8 @@ class Laser:
             raise ValueError("duration_s must be > 0")
         if cadence_hz <= 0:
             raise ValueError("cadence_hz must be > 0")
-        if cadence_hz > 11:
-            raise ValueError("cadence_hz must be <= 11, seems to fail around 12 Hz")
+        # if cadence_hz > 11:
+        #     raise ValueError("cadence_hz must be <= 11, seems to fail around 12 Hz")
 
         period_s = 1.0 / cadence_hz
         num_samples = max(1, int(np.ceil(duration_s * cadence_hz)))
@@ -346,11 +353,11 @@ class Laser:
                 now = time.perf_counter()
                 data[i] = (
                     now - start,
-                    device.get_tec_temperature_measured(),
-                    device.get_tec_voltage(),  # MAXUINT16 seems to mean TEC is off via PID command allowing it to heat
-                    device.get_tec_current_measured(),  # MAXUINT16 seems to mean TEC is off via PID command allowing it to heat
-                    device.get_current_measured(),
-                    device.get_voltage_measured(),
+                    0 if not tec else device.get_tec_temperature_measured(),
+                    0 if not tec else device.get_tec_voltage(),  # MAXUINT16 seems to mean TEC is off via PID command allowing it to heat
+                    0 if not tec else device.get_tec_current_measured(),  # MAXUINT16 seems to mean TEC is off via PID command allowing it to heat
+                    0 if not laser else device.get_current_measured(),
+                    0 if not laser else device.get_voltage_measured(),
                 )
                 monitor._count = i + 1
                 next_time = start + (i + 1) * period_s
@@ -364,11 +371,11 @@ class Laser:
         return monitor
 
     def tune_and_monitor(self, desired_brightness: float, wavelength: u.Quantity, duration_s: float,
-                         cadence_hz: float = 100.0, **tune_kwargs) -> LaserMonitorData:
+                         cadence_hz: float = 100.0, monitor_kwargs=None, **tune_kwargs) -> LaserMonitorData:
         """Tune wavelength (applying settings) then start monitoring and return the monitor object."""
         apply = tune_kwargs.pop("apply", True)
         self.tune_wavelength(desired_brightness, wavelength, apply=apply, **tune_kwargs)
-        return self.monitor_diode(duration_s=duration_s, cadence_hz=cadence_hz)
+        return self.monitor_diode(duration_s=duration_s, cadence_hz=cadence_hz, **(monitor_kwargs or {}))
 
     @staticmethod
     def compute_power_and_wavelength(laser_properties: LaserProperties, tec_temp_c, diode_current_ma):
@@ -403,8 +410,8 @@ class Laser:
             raise ValueError(f"Desired brightness must be [0-1]")
 
         if x==0:
-            self.device.set_current(0)
             self.device.stop_device()
+            self.device.set_current(0)
 
         if not self.ready_to_operate():
             raise RuntimeError("Laser not ready to operate, try calling disable_interlock_and_cool() or status()")
@@ -435,52 +442,109 @@ class Laser:
         tec_running = self.device.is_tec_started()
         return tec_running and not interlocked
 
-    def status(self, verbose=True):
-        device = self.device
-
-        print(f"Laser Name: '{self.laser_properties.name}'")
-        if verbose:
-            print("Device ID:", device.get_device_id())
-            print("Serial Number:", device.get_serial_number())
-        print("Operation started:", device.is_operation_started())
-        if verbose:
-            print(" Raw State:", hex(device.get_raw_status("state_of_device")))
-            print(" Current Set Internal:", device.is_current_set_internal())
-            print(" Enable Internal:", device.is_enable_internal())
-            print(" External NTC Denied:", device.is_external_ntc_denied())
-            print(" Interlock Denied:", device.is_interlock_denied())
-            print(" Interlock State:", hex(device.get_raw_status("lock_status")))
-            print(" Interlock:", device.is_lockstate_interlock())
-            print(" External NTC Interlock:", device.is_lockstate_external_ntc_interlock())
-        print("Voltage:", device.get_voltage_measured())
-        print(f"Current (min-max): {device.get_current():.2f} ({device.get_current_min():.2f}-{device.get_current_max():.2f})")
-
-
-        if verbose:
-            print("Protection Threshold:", device.get_current_protection_threshold())
-            print("Driver Max Current:", device.get_current_max_limit())
-        print("Current Set Calibration:", device.get_current_set_calibration())
+    def status(self, verbose=True, show=True):
+        status = {
+            "name": self.laser_properties.name,
+            "op_started": self.device.is_operation_started(),
+            "voltage": self.device.get_voltage_measured(),
+            "curr": self.device.get_current(),
+            "curr_min": self.device.get_current_min(),
+            "curr_max": self.device.get_current_max(),
+            "curr_set_cal": self.device.get_current_set_calibration(),
+            "tec_started": self.device.is_tec_started(),
+            "tec_temp_set": self.device.get_tec_temperature_value(),
+            "tec_temp": self.device.get_tec_temperature_measured(),
+            "tec_voltage": self.device.get_tec_voltage(),
+            "tec_curr_lim": self.device.get_tec_current_limit(),
+            "tec_curr": self.device.get_tec_current_measured(),
+            "tec_error": self.device.is_lockstate_tec_error(),
+            "tec_self_heat": self.device.is_lockstate_tec_selfheat(),
+            "ld_overcurrent": self.device.is_lockstate_lo_overcurrent(),
+            "ld_overheat": self.device.is_lockstate_lo_overheat(),
+        }
 
         if verbose:
-            print("Frequency:", device.get_frequency())
-            print("Duration:", device.get_duration())
+            status.update({
+                "dev_id": self.device.get_device_id(),
+                "serial": self.device.get_serial_number(),
+                "raw_state": hex(self.device.get_raw_status("state_of_device")),
+                "curr_set_int": self.device.is_current_set_internal(),
+                "en_int": self.device.is_enable_internal(),
+                "ext_ntc_denied": self.device.is_external_ntc_denied(),
+                "interlock_denied": self.device.is_interlock_denied(),
+                "interlock_state": hex(self.device.get_raw_status("lock_status")),
+                "interlock": self.device.is_lockstate_interlock(),
+                "ext_ntc_interlock": self.device.is_lockstate_external_ntc_interlock(),
+                "prot_thresh": self.device.get_current_protection_threshold(),
+                "drv_max_curr": self.device.get_current_max_limit(),
+                "freq": self.device.get_frequency(),
+                "duration": self.device.get_duration(),
+                "tec_pid": self.device.get_tec_pid(),
+                "tec_ntc_coeff": self.device.get_ntc_b25_100_coefficient(),
+                "tec_raw_state": hex(self.device.get_raw_status("tec_state")),
+                "tec_set_ext": self.device.is_tec_set_external(),
+                "tec_en_ext": self.device.is_tec_enable_external(),
+            })
 
-        print("TEC Started:", device.is_tec_started())
-        print(" TEC Temperature Setpoint:", device.get_tec_temperature_value())
-        print(" TEC Temperature:", device.get_tec_temperature_measured())
-        print(" TEC Voltage:", device.get_tec_voltage())
-        print(" TEC Current Limit:", device.get_tec_current_limit())
-        print(" TEC Current:", device.get_tec_current_measured())
-        print(" TEC Error:", device.is_lockstate_tec_error())
-        print(" TEC Self-heat:", device.is_lockstate_tec_selfheat())
+        lines = [f"Laser Name: '{status['name']}'"]
         if verbose:
-            print(" TEC PID:", device.get_tec_pid())
-            print(" TEC NTC Coefficient:", device.get_ntc_b25_100_coefficient())
-            print(" TEC Raw State:", hex(device.get_raw_status("tec_state")))
-            print(" TEC Set Internal:", device.is_tec_set_external())
-            print(" TEC Enable Internal:", device.is_tec_enable_external())
+            lines.extend([
+                f"Device ID: {status['dev_id']}",
+                f"Serial Number: {status['serial']}",
+            ])
+        lines.append(f"Operation started: {status['op_started']}")
+        if verbose:
+            lines.extend([
+                f" Raw State: {status['raw_state']}",
+                f" Current Set Internal: {status['curr_set_int']}",
+                f" Enable Internal: {status['en_int']}",
+                f" External NTC Denied: {status['ext_ntc_denied']}",
+                f" Interlock Denied: {status['interlock_denied']}",
+                f" Interlock State: {status['interlock_state']}",
+                f" Interlock: {status['interlock']}",
+                f" External NTC Interlock: {status['ext_ntc_interlock']}",
+            ])
+        lines.append(f"Voltage: {status['voltage']}")
+        lines.append(
+            f"Current (min-max): {status['curr']:.2f} ({status['curr_min']:.2f}-{status['curr_max']:.2f})"
+        )
 
+        if verbose:
+            lines.extend([
+                f"Protection Threshold: {status['prot_thresh']}",
+                f"Driver Max Current: {status['drv_max_curr']}",
+            ])
+        lines.append(f"Current Set Calibration: {status['curr_set_cal']}")
 
-        print("LD Overcurrent:", device.is_lockstate_lo_overcurrent())
-        print("LD Overheat:", device.is_lockstate_lo_overheat())
+        if verbose:
+            lines.extend([
+                f"Frequency: {status['freq']}",
+                f"Duration: {status['duration']}",
+            ])
 
+        lines.extend([
+            f"TEC Started: {status['tec_started']}",
+            f" TEC Temperature Setpoint: {status['tec_temp_set']}",
+            f" TEC Temperature: {status['tec_temp']}",
+            f" TEC Voltage: {status['tec_voltage']}",
+            f" TEC Current Limit: {status['tec_curr_lim']}",
+            f" TEC Current: {status['tec_curr']}",
+            f" TEC Error: {status['tec_error']}",
+            f" TEC Self-heat: {status['tec_self_heat']}",
+        ])
+        if verbose:
+            lines.extend([
+                f" TEC PID: {status['tec_pid']}",
+                f" TEC NTC Coefficient: {status['tec_ntc_coeff']}",
+                f" TEC Raw State: {status['tec_raw_state']}",
+                f" TEC Set Internal: {status['tec_set_ext']}",
+                f" TEC Enable Internal: {status['tec_en_ext']}",
+            ])
+
+        lines.extend([
+            f"LD Overcurrent: {status['ld_overcurrent']}",
+            f"LD Overheat: {status['ld_overheat']}",
+        ])
+        if show:
+            print("\n".join(lines))
+        return status
