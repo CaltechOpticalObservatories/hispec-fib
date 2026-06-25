@@ -1,6 +1,65 @@
 # Mechanical Switcher PLC Overview
 
 
+
+## Overview of Mechanical Commands:
+
+Note that these likely should be split between a MechanicalSwitcher class and a MainSwitch daemon.
+The former handling the hardware, the latter coordinating policy and interaction with the imaging engine.
+
+### Functions
+- High Level:
+  - Connect with standard policy (daemon/driver decides if time to clean or image)
+  - Directly go to specified connection state .
+  - Halt (stop all motors)
+  - Abort (panic synonym for directly go to disconnected state)
+  - Perform Clean and image routine [inner, outer, both], ncleans:
+    - Preimage all fibers
+    - Clean n times
+    - Post image all fibers
+  - Image Inner Slit fiber with external camera: slit1, slit2, slit3
+  - Clean Inner Slit fibers simultaneously
+  - Clean Outer (Input) fibers simultaneously
+  - Image Outer fiber with internal camera: splitter1-3, photonic1-3, science1-3 (background, science, speckle), cal fiber
+  - Stats and associated reset functions:
+    - number of cleans executed by [inner/outer] cleaners (resettable)
+    - number of connections executed on fiber (resettable) NB imaging inner/outer fibers does NOT trigger a connection 
+      - Note that a connection connects multiple fibers
+    - last fiber image path (potentially unknown)
+    - last cleaning of fiber
+    - Number of cleans of fiber (resettable)
+    - PLC State Info:
+      - Axis position, velocity
+      - air valve setting
+      - homed or not
+      - auto motion moving
+  - Current State:
+    - Connections active or current task
+  - Settings:
+    - connections between cleaning inner
+    - connections between cleaning outer
+    - imaging frequency
+    - air purge state: auto (what this means is tbd, always during motion?), override_off, override_on 
+  - Engineering Functions:
+    - Move laterally to specified connection position (do not connect), must be in passing position ok to trust PLC if it keeps safe
+    - Retract/Insert at current position
+    - return to origin
+    - set camera observation position
+    - set insertion position for fiber connection
+    - set post-connection move back amount
+    - Switch between automatic and manual operation mode of PLC 
+    - Perform homing
+      - System likely must be homed after powerup and before first connection, but should automatically perform that at first high level commmand that requires motion
+    - Lowest Level Engineering Settings (should not ever need to change):
+      - Speed, acceleration, deceleration for each motion
+        - passing, insertion start, fiber connect, stable connect, disconnect
+  - Alerts:
+    - Failure
+    - Dirty fiber
+    - Fiber image avaialable at
+    - Fibers changing connection
+    - Fibers connection
+
 ## Key notes from spreadsheet shared from manufacturer.
 
 - Always perform a "return to origin" at power on.
@@ -10,7 +69,29 @@
 - M02: Inserter Axis
 
 
-## Commands
+## PLC commanding
+
+The switcher appears to be a Mitsubishi MELSEC PCL using MC type 3E protocol which suggests use of `pymcprotocol` 
+will markely make operations more clear: 
+
+```python
+from pymcprotocol import Type3E
+
+ip='192.168.0.10'
+port=5000
+
+plc = Type3E()
+plc.connect(ip, port)
+
+data = plc.batchread_wordunits('W*000000', 14)  # Read 14 words from W*000000
+
+plc.batchwrite_wordunits('W*000014', [0x0104, 0x0102])  # Write a word
+```
+
+
+
+Updates to the below commands from Dec 25 are in 
+https://caltech.sharepoint.com/:x:/r/sites/coo/hispec/Shared%20Documents/HISPEC%20-%20Subsystems%20%5BL3%5D/Fiber%20Delivery%20Subsystem%20%5BFIB%5D/Mechanical%20Switches/Mechanical_switch_users_guide/Final_mechanical_switcher_instructions_and_command_list/%E3%83%95%E3%82%A1%E3%82%A4%E3%83%8F%E3%82%99%E3%83%BC%E4%BA%A4%E6%8F%9B%E5%99%A82025%E4%B8%8A%E4%BD%8D%E9%80%9A%E4%BF%A1%E5%8F%8A%E3%81%B2%E3%82%99GOT%E8%AA%AC%E6%98%8E260611_translated.xlsx?d=w76b10bcdc97f446c86fdbd8d47ef8e52&csf=1&web=1&e=WiTNz9
 
 ### Get Status
 command: `500000FF03FF000018000004010000W*000000000E`
@@ -69,6 +150,7 @@ response: `D00000FF03FF00003C00000104010200010001AFC8000003E80000753000000000000
 	- 14: MSG30 Purge air valve operation reached the specified number of cycles
 	- 15: MSG31 Mating operation reached the specified number of cycles
 	- 16-23: Unspecified
+
 ### Set Target
 - command:`500000FF03FF000020000014010000W*0000140002xxxxyyyy`
 - port A (xxxx): 0101 -- 0113 (0100 + port number 1-13)
@@ -108,20 +190,43 @@ response: `D00000FF03FF00003C00000104010200010001AFC8000003E80000753000000000000
 - success gets: D00000FF03FF0000040000 
 
 
-## Control
-The switcher appears to be a Mitsubishi MELSEC PCL using MC type 3E protocol which suggests use of `pymcprotocol` could clean up operations 
+## Overview of Fiber Imaging
 
-```python
-from pymcprotocol import Type3E
+Switcher uses Lightel DS series cameras that present under linux as UVC (universal video class) webcam devices that 
+expose the standard api for additional controls. I believe from initial exploration both auto/manual focus and light 
+illumination control was present as was som form of exposure setting. 
 
-ip='192.168.0.10'
-port=5000
+I'd encourage the development of a python app that uses open cv to connect to these cameras, grab frames, detect and 
+extract the relevant regions.
 
-plc = Type3E()
-plc.connect(ip, port)
+Two principal algorithmic parts would exist:
+- Get a well focused, well exposed image of the fiber end. 
+  - While there might be a state branch in the approach between front/back illumination imaging given a specific state focus must be attainable without user intervention. 
+  - Detection of front/back illumination can also be done without outside info. 
+  - See Jeb/Nem for algorithmic simplicity here. 
+- Detect dirt/debris on the fiber end.
+  - This is also a simple difference within standard basic cv tooling
 
-data = plc.batchread_wordunits('W*000000', 14)  # Read 14 words from W*000000
 
-plc.batchwrite_wordunits('W*000014', [0x0104, 0x0102])  # Write a word
-```
+HISPEC will want a library of the images but a database is almost certainly unwise. Using a filename schema 
+(and folder structure based on either year or month to prevent file-in-folder nuisance issues) will be far more human-friendly.
+A simple wrapper of the names for data retrieval/persistence of image and comparison makes this into a "database".
 
+I'd suggest that database be written to via an NFS mount on the rpi.
+
+The program would essentially proceed as follows:
+- command to image fiber end against a specified reference image with hint of fiber_position_id
+- camera is checked for responsivity and usb power to it is cycled via rPi gpio if necessary. info level log emitted 
+- program uses last focus of fiber_id and updates focus as needed, persisting to local text file any update of focus hit
+  - error focusing is reported and propagates to requestor
+- program obtains image and saves to local (nfs) file system
+  - saved images should be exif data stamped with fiber_position_id, focus setting, illumination levels
+  - image level should be normalized so human skim of database is not subject to bulk changes.
+  - jpg is almost certainly sufficient.
+- program compares with reference image and issues alerts as needed
+  - settings of what constitutes an issue are coordinated per broader HISPEC settings paradigms
+- program publishes image of end and difference with reference over standard publishing (eg.g for an external gui to capture if desired)
+
+Higher-level programs not on rPi would be responsible for:
+- any decisions about what to do based on image 
+- tracking (or simply rebuilding from the images) a dirtiness score of a fiber with time and with connection count
