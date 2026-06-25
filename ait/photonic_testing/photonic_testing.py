@@ -117,7 +117,7 @@ LASER_1270 = LaserProperties(name="1270", model_number="1270LD-1-0-0",
                              dlambda_dA=0.003*u.nm/u.mA,
                              dlambda_dT=0.08*u.nm/u.deg_C,
 
-                             operating_temp_range=(15 * u.deg_C, 40 * u.deg_C),  # loosely, DS specifies case temp of -5-60
+                             operating_temp_range=DEFAULT_OPERATING_TEMP_RANGE,  # loosely, DS specifies case temp of -5-60
                              operating_temp=25 * u.deg_C,
                              thermisistor=10 * u.kOhm,
                              isolation=25 * u.dB,
